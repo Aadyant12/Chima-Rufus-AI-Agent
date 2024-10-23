@@ -44,4 +44,4 @@ class RufusClient:
 
 class RufusError(Exception):
   """Custom exception class for Rufus-specific errors."""
-  print("Unknown error occurred")
+  pass
