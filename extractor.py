@@ -21,6 +21,9 @@ class ContentExtractor:
     Extract relevant content from crawled pages based on instructions.
     Returns individual relevant chunks instead of combined summaries.
     """
+    print(f"🧠 Processing instructions: '{instructions}'")
+    print(f"📚 Generating instruction embeddings...")
+    
     # Get user instruction embeddings
     instruction_embedding = self.sentence_transformer.encode(
       instructions,
@@ -29,11 +32,20 @@ class ContentExtractor:
     
     extracted_content = []
     
-    for page in pages:
+    for page_num, page in enumerate(pages, 1):
+        print(f"\n📄 Processing page {page_num}/{len(pages)}: {page['title']}")
+        print(f"🔗 URL: {page['url']}")
+        
         # Split content into chunks for processing
         chunks = self._split_into_chunks(page['text'])
+        print(f"✂️  Split into {len(chunks)} chunks for analysis")
+        
+        if len(chunks) == 0:
+            print(f"⚠️  No content chunks found on this page")
+            continue
         
         # Get embeddings for all chunks
+        print(f"🧮 Generating embeddings for {len(chunks)} chunks...")
         chunk_embeddings = self.sentence_transformer.encode(
           chunks,
           convert_to_tensor=True
@@ -45,9 +57,11 @@ class ContentExtractor:
           chunk_embeddings
         )
         
-        # Filter relevant chunks (similarity > 0.3) and return each individually
+        relevant_chunks_found = 0
+        # Filter relevant chunks (similarity > 0.6) and return each individually
         for i, chunk in enumerate(chunks):
           if similarities[i] > 0.6:
+            relevant_chunks_found += 1
             # Print relevant chunk as soon as it's found
             print(f"\n🔍 RELEVANT CHUNK FOUND!")
             print(f"📄 Source: {page['title']} ({page['url']})")
@@ -63,7 +77,10 @@ class ContentExtractor:
               'relevance_score': float(similarities[i]),
               'chunk_index': i  # Add chunk index for reference
             })
+        
+        print(f"📊 Page summary: {relevant_chunks_found}/{len(chunks)} chunks were relevant")
     
+    print(f"\n🔄 Sorting {len(extracted_content)} relevant chunks by relevance score...")
     # Sort by relevance score
     extracted_content.sort(
       key=lambda x: x['relevance_score'],

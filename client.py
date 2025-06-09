@@ -21,14 +21,29 @@ class RufusClient:
     max_depth: Maximum depth for recursive crawling
     """
     try:
+      print(f"\n🚀 STARTING RUFUS WEB SCRAPING")
+      print(f"🎯 Target URL: {url}")
+      print(f"📋 Instructions: {instructions}")
+      print(f"🔍 Max Depth: {max_depth}")
+      print(f"{'='*60}")
+      
       # Crawl the website
+      print(f"\n🕷️  STARTING WEB CRAWLING...")
       pages = self.crawler.crawl(url, max_depth=max_depth)
+      print(f"✅ Crawling completed! Found {len(pages)} pages")
       
       # Extract relevant content based on user instructions
+      print(f"\n🧠 STARTING CONTENT EXTRACTION...")
+      print(f"📊 Analyzing {len(pages)} pages for relevant content...")
       extracted_content = self.extractor.extract(
         pages=pages,
         instructions=instructions
       )
+      
+      print(f"\n📈 EXTRACTION SUMMARY:")
+      print(f"✨ Found {len(extracted_content)} relevant chunks")
+      print(f"🌐 From {len(set(doc['url'] for doc in extracted_content))} unique sources")
+      print(f"{'='*60}")
       
       # return in structured format
       return {
@@ -40,6 +55,7 @@ class RufusClient:
       }
         
     except Exception as e:
+      print(f"❌ ERROR: Scraping failed - {str(e)}")
       raise RufusError(f"Scraping failed: {str(e)}")
 
 class RufusError(Exception):

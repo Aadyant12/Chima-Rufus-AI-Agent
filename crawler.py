@@ -49,21 +49,25 @@ class WebCrawler:
       return
 
     try:
+      print(f"🌐 Crawling [Depth {current_depth}]: {url}")
       time.sleep(self.delay)
       self.visited_urls.add(url)
       
       # Make request
       response = self.session.get(url, timeout=15)
       if response.status_code != 200:
-        print(f"Failed to fetch {url}: Status code {response.status_code}")
+        print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
         return
       
       soup = BeautifulSoup(response.text, 'html.parser')
+      page_title = soup.title.string if soup.title else 'No Title'
+      
+      print(f"✅ Successfully scraped: {page_title}")
       
       # Store page data
       results.append({
         'url': url,
-        'title': soup.title.string if soup.title else '',
+        'title': page_title,
         'html': response.text,
         'text': soup.get_text(separator=' ', strip=True),
         'depth': current_depth
@@ -71,22 +75,27 @@ class WebCrawler:
       
       # Only continue if we haven't reached max depth
       if current_depth < max_depth:
+        print(f"🔗 Looking for links on: {url}")
         
         # Find all links
+        links_found = 0
         for link in soup.find_all('a', href=True):
           next_url = urljoin(url, link['href'])
 
           # Recursively crawl each valid link
           if self._should_crawl(next_url):
+            links_found += 1
             self._crawl_recursive(
               next_url, 
               current_depth + 1, 
               max_depth, 
               results
             )
+        
+        print(f"📊 Found {links_found} valid links to crawl from {url}")
                 
     except Exception as e:
-      print(f"Error crawling {url}: {str(e)}")
+      print(f"❌ Error crawling {url}: {str(e)}")
 
   def _should_crawl(self, url: str) -> bool:
     """
