@@ -38,6 +38,16 @@ class ContentExtractor:
         print(f"\n📄 Processing page {page_num}/{len(pages)}: {page['title']}")
         print(f"🔗 URL: {page['url']}")
         
+        # Display navigation path
+        if 'navigation_path' in page and page['navigation_path']:
+            print(f"🗺️ Navigation path to this page:")
+            for i, path_node in enumerate(page['navigation_path']):
+                indent = "  " * (i + 1)
+                print(f"{indent}↳ {path_node['title']} ({path_node['url']})")
+            print(f"  {'  ' * len(page['navigation_path'])}↳ 🎯 {page['title']} ({page['url']})")
+        else:
+            print(f"🏠 This is the root/starting page")
+        
         # Split content into chunks for processing
         chunks = self._split_into_chunks(page['text'])
         print(f"✂️  Split into {len(chunks)} chunks for analysis")
@@ -70,9 +80,20 @@ class ContentExtractor:
         for i, chunk in enumerate(chunks):
           if similarities[i] > self.similarity_threshold:
             relevant_chunks_found += 1
-            # Print relevant chunk as soon as it's found
+            # Print relevant chunk with complete navigation path
             print(f"\n🔍 RELEVANT CHUNK FOUND!")
             print(f"📄 Source: {page['title']} ({page['url']})")
+            
+            # Display complete navigation path for relevant chunk
+            if 'navigation_path' in page and page['navigation_path']:
+                print(f"🗺️ Complete navigation path to this chunk:")
+                for j, path_node in enumerate(page['navigation_path']):
+                    indent = "  " * (j + 1)
+                    print(f"{indent}↳ {path_node['title']} ({path_node['url']})")
+                print(f"  {'  ' * len(page['navigation_path'])}↳ 🎯 {page['title']} ({page['url']}) [Chunk {i+1}]")
+            else:
+                print(f"🏠 Found in root/starting page [Chunk {i+1}]")
+            
             print(f"📊 Relevance Score: {float(similarities[i]):.3f}")
             print(f"📝 Content Preview: {chunk[:200]}{'...' if len(chunk) > 200 else ''}")
             print(f"{'='*60}")
@@ -83,7 +104,8 @@ class ContentExtractor:
               'title': page['title'],
               'depth': page['depth'],
               'relevance_score': float(similarities[i]),
-              'chunk_index': i  # Add chunk index for reference
+              'chunk_index': i,  # Add chunk index for reference
+              'navigation_path': page.get('navigation_path', [])  # Add navigation path
             })
         
         print(f"📊 Page summary: {relevant_chunks_found}/{len(chunks)} chunks were relevant")
