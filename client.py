@@ -6,13 +6,13 @@ from crawler import WebCrawler
 from extractor import ContentExtractor
 
 class RufusClient:
-  def __init__(self, api_key: str = None):
+  def __init__(self, api_key: str = None, chunk_size: int = 1024, similarity_threshold: float = 0.6):
     self.api_key = api_key or os.getenv('RUFUS_API_KEY')
     if not self.api_key or self.api_key != "loved_the_assignment":
         raise ValueError("API key is required.")
     
     self.crawler = WebCrawler()
-    self.extractor = ContentExtractor()
+    self.extractor = ContentExtractor(chunk_size=chunk_size, similarity_threshold=similarity_threshold)
     
     # Initialize cache for storing scraped results
     self.crawl_cache = {}  # Cache for raw crawled pages
@@ -116,17 +116,21 @@ class RufusClient:
   
   def get_cache_info(self) -> Dict:
     """Get information about the current cache state."""
+    crawler_info = self.crawler.get_cache_info()
     return {
       'crawl_cache_entries': len(self.crawl_cache),
       'extraction_cache_entries': len(self.extraction_cache),
-      'total_cached_pages': sum(len(pages) for pages in self.crawl_cache.values())
+      'total_cached_pages': sum(len(pages) for pages in self.crawl_cache.values()),
+      'crawler_cached_pages': crawler_info['cached_pages'],
+      'crawler_visited_urls': crawler_info['visited_urls']
     }
   
   def clear_cache(self):
     """Clear all cached data."""
     self.crawl_cache.clear()
     self.extraction_cache.clear()
-    print("🗑️  Cache cleared successfully")
+    self.crawler.clear_cache()  # Also clear crawler's page cache
+    print("🗑️  All caches cleared successfully")
 
 class RufusError(Exception):
   """Custom exception class for Rufus-specific errors."""

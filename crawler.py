@@ -33,6 +33,9 @@ class WebCrawler:
     """
     self.strict_domain = strict_domain
     
+    # Reset visited URLs for each new crawl operation
+    self.visited_urls.clear()
+    
     # Extract base domain from start URL and add to allowed domains
     parsed_start_url = urlparse(start_url)
     base_domain = parsed_start_url.netloc.lower()
@@ -43,6 +46,7 @@ class WebCrawler:
       self.allowed_domains = {base_domain}
     else:
       # Original behavior - allow domain variations
+      self.allowed_domains = set()  # Reset allowed domains
       self.allowed_domains.add(base_domain)
       
       # Also allow the main domain without subdomain

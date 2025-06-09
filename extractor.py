@@ -6,8 +6,10 @@ from transformers import pipeline
 import re
 
 class ContentExtractor:
-  def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+  def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2", chunk_size: int = 1024, similarity_threshold: float = 0.5):
     self.sentence_transformer = SentenceTransformer(model_name)
+    self.chunk_size = chunk_size
+    self.similarity_threshold = similarity_threshold
     
     # Remove summarization model since we're not using it anymore
     # self.summarizer = pipeline(
@@ -64,9 +66,9 @@ class ContentExtractor:
           print(f"  Chunk {i+1}: {similarity_score:.3f} - {chunk[:100]}{'...' if len(chunk) > 100 else ''}")
         
         relevant_chunks_found = 0
-        # Filter relevant chunks (similarity > 0.6) and return each individually
+        # Filter relevant chunks and return each individually
         for i, chunk in enumerate(chunks):
-          if similarities[i] > 0.6:
+          if similarities[i] > self.similarity_threshold:
             relevant_chunks_found += 1
             # Print relevant chunk as soon as it's found
             print(f"\n🔍 RELEVANT CHUNK FOUND!")
@@ -95,10 +97,13 @@ class ContentExtractor:
     
     return extracted_content
 
-  def _split_into_chunks(self, text: str, chunk_size: int = 512) -> List[str]:
+  def _split_into_chunks(self, text: str, chunk_size: int = None) -> List[str]:
     """
     Split text into chunks for processing.
     """
+    if chunk_size is None:
+      chunk_size = self.chunk_size
+      
     # Clean text
     text = re.sub(r'\s+', ' ', text).strip()
     
