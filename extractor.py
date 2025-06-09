@@ -48,6 +48,13 @@ class ContentExtractor:
         # Filter relevant chunks (similarity > 0.3) and return each individually
         for i, chunk in enumerate(chunks):
           if similarities[i] > 0.6:
+            # Print relevant chunk as soon as it's found
+            print(f"\n🔍 RELEVANT CHUNK FOUND!")
+            print(f"📄 Source: {page['title']} ({page['url']})")
+            print(f"📊 Relevance Score: {float(similarities[i]):.3f}")
+            print(f"📝 Content Preview: {chunk[:200]}{'...' if len(chunk) > 200 else ''}")
+            print(f"{'='*60}")
+            
             extracted_content.append({
               'url': page['url'],
               'content': chunk,  # Individual chunk instead of combined text
