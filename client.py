@@ -6,24 +6,29 @@ from crawler import WebCrawler
 from extractor import ContentExtractor
 
 class RufusClient:
-  def __init__(self, api_key: str = None, chunk_size: int = 1024, similarity_threshold: float = 0.6):
+  def __init__(self, api_key: str = None, chunk_size: int = 1024, similarity_threshold: float = 0.6, parse_pdfs: bool = False):
     self.api_key = api_key or os.getenv('RUFUS_API_KEY')
     if not self.api_key or self.api_key != "loved_the_assignment":
         raise ValueError("API key is required.")
     
-    self.crawler = WebCrawler()
+    self.parse_pdfs = parse_pdfs
+    self.crawler = WebCrawler(parse_pdfs=parse_pdfs)
     self.extractor = ContentExtractor(chunk_size=chunk_size, similarity_threshold=similarity_threshold)
     
     # Initialize cache for storing scraped results
     self.crawl_cache = {}  # Cache for raw crawled pages
     self.extraction_cache = {}  # Cache for processed extraction results
+    
+    if parse_pdfs:
+      print("📄 PDF parsing enabled - PDFs will be processed during crawling")
 
   def _generate_cache_key(self, url: str, max_depth: int, strict_domain: bool) -> str:
     """Generate a unique cache key for crawl parameters."""
     cache_data = {
       'url': url.lower().strip(),
       'max_depth': max_depth,
-      'strict_domain': strict_domain
+      'strict_domain': strict_domain,
+      'parse_pdfs': self.parse_pdfs  # Include PDF parsing setting in cache key
     }
     cache_string = json.dumps(cache_data, sort_keys=True)
     return hashlib.md5(cache_string.encode()).hexdigest()

@@ -4,14 +4,28 @@ from urllib.parse import urljoin, urlparse
 from typing import Set, Dict, List
 import time
 import hashlib
+import io
+
+# PDF parsing imports
+try:
+    import PyPDF2
+    PDF_PARSING_AVAILABLE = True
+except ImportError:
+    PDF_PARSING_AVAILABLE = False
+    print("⚠️  PyPDF2 not found. Install with: pip install PyPDF2")
 
 class WebCrawler:
-  def __init__(self, allowed_domains: Set[str] = None):
+  def __init__(self, allowed_domains: Set[str] = None, parse_pdfs: bool = False):
     self.visited_urls: Set[str] = set()
     self.session = requests.Session()
     self.delay = 1  # Delay between requests in seconds
     self.allowed_domains = allowed_domains or set()
     self.strict_domain = False
+    self.parse_pdfs = parse_pdfs
+    
+    # Validate PDF parsing capability
+    if self.parse_pdfs and not PDF_PARSING_AVAILABLE:
+      raise ValueError("PDF parsing requested but PyPDF2 is not installed. Install with: pip install PyPDF2")
     
     # Add page-level cache
     self.page_cache: Dict[str, Dict] = {}
@@ -19,6 +33,30 @@ class WebCrawler:
   def _get_page_cache_key(self, url: str) -> str:
     """Generate a cache key for individual pages."""
     return hashlib.md5(url.encode()).hexdigest()
+
+  def _extract_pdf_text(self, pdf_content: bytes) -> str:
+    """Extract text from PDF content."""
+    if not PDF_PARSING_AVAILABLE:
+      return ""
+    
+    try:
+      pdf_file = io.BytesIO(pdf_content)
+      pdf_reader = PyPDF2.PdfReader(pdf_file)
+      
+      text = ""
+      for page_num in range(len(pdf_reader.pages)):
+        page = pdf_reader.pages[page_num]
+        text += page.extract_text() + "\n"
+      
+      return text.strip()
+    except Exception as e:
+      print(f"❌ Error extracting PDF text: {str(e)}")
+      return ""
+
+  def _is_pdf_url(self, url: str) -> bool:
+    """Check if URL points to a PDF file."""
+    parsed_url = urlparse(url)
+    return parsed_url.path.lower().endswith('.pdf')
 
   def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
     """
@@ -81,8 +119,8 @@ class WebCrawler:
         results.append(cached_page)
         self.visited_urls.add(url)
         
-        # Continue crawling links from cached page if not at max depth
-        if current_depth < max_depth:
+        # Continue crawling links from cached page if not at max depth and not a PDF
+        if current_depth < max_depth and not self._is_pdf_url(url):
           soup = BeautifulSoup(cached_page['html'], 'html.parser')
           self._crawl_links_from_soup(soup, url, current_depth, max_depth, results)
         return
@@ -91,7 +129,12 @@ class WebCrawler:
       time.sleep(self.delay)
       self.visited_urls.add(url)
       
-      # Make request
+      # Handle PDF files differently
+      if self._is_pdf_url(url):
+        self._process_pdf(url, current_depth, results)
+        return
+      
+      # Make request for HTML content
       response = self.session.get(url, timeout=15)
       if response.status_code != 200:
         print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
@@ -108,7 +151,8 @@ class WebCrawler:
         'title': page_title,
         'html': response.text,
         'text': soup.get_text(separator=' ', strip=True),
-        'depth': current_depth
+        'depth': current_depth,
+        'content_type': 'html'
       }
       
       # Cache the page (without depth since depth can vary)
@@ -125,6 +169,52 @@ class WebCrawler:
                 
     except Exception as e:
       print(f"❌ Error crawling {url}: {str(e)}")
+
+  def _process_pdf(self, url: str, current_depth: int, results: List[Dict]):
+    """Process a PDF file."""
+    try:
+      print(f"📄 Processing PDF [Depth {current_depth}]: {url}")
+      
+      # Download PDF content
+      response = self.session.get(url, timeout=30)
+      if response.status_code != 200:
+        print(f"❌ Failed to download PDF {url}: Status code {response.status_code}")
+        return
+      
+      # Extract text from PDF
+      pdf_text = self._extract_pdf_text(response.content)
+      
+      if not pdf_text:
+        print(f"⚠️  No text extracted from PDF: {url}")
+        return
+      
+      # Get PDF title from URL or content
+      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
+      
+      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
+      print(f"📊 Extracted {len(pdf_text)} characters from {url}")
+      
+      # Create page data for PDF
+      page_data = {
+        'url': url,
+        'title': pdf_title,
+        'html': '',  # PDFs don't have HTML
+        'text': pdf_text,
+        'depth': current_depth,
+        'content_type': 'pdf'
+      }
+      
+      # Cache the PDF data
+      cache_key = self._get_page_cache_key(url)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store PDF data
+      results.append(page_data)
+      
+    except Exception as e:
+      print(f"❌ Error processing PDF {url}: {str(e)}")
 
   def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict]):
     """Extract and crawl links from a BeautifulSoup object."""
@@ -189,13 +279,22 @@ class WebCrawler:
       for excluded in excluded_domains:
         if domain == excluded or domain.endswith('.' + excluded):
           return False
+      
+      # Handle PDF files
+      if parsed_url.path.lower().endswith('.pdf'):
+        return self.parse_pdfs  # Only allow PDFs if PDF parsing is enabled
           
-      # Ignore common non-HTML extensions
+      # Ignore common non-HTML extensions (excluding PDF when PDF parsing is enabled)
       ignored_extensions = [
-        '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.doc', 
+        '.jpg', '.jpeg', '.png', '.gif', '.doc', 
         '.docx', '.ppt', '.pptx', '.zip', '.tar', '.gz',
         '.mp4', '.avi', '.mov', '.mp3', '.wav', '.exe'
       ]
+      
+      # Add PDF to ignored extensions only if PDF parsing is disabled
+      if not self.parse_pdfs:
+        ignored_extensions.append('.pdf')
+      
       if any(parsed_url.path.lower().endswith(ext) for ext in ignored_extensions):
         return False
       
