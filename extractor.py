@@ -9,16 +9,17 @@ class ContentExtractor:
   def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
     self.sentence_transformer = SentenceTransformer(model_name)
     
-    # Load summarization model for content summarization
-    self.summarizer = pipeline(
-      "summarization",
-      model="facebook/bart-large-cnn",
-      device=0 if torch.cuda.is_available() else -1
-    )
+    # Remove summarization model since we're not using it anymore
+    # self.summarizer = pipeline(
+    #   "summarization",
+    #   model="facebook/bart-large-cnn",
+    #   device=0 if torch.cuda.is_available() else -1
+    # )
 
   def extract(self, pages: List[Dict], instructions: str) -> List[Dict]:
     """
     Extract relevant content from crawled pages based on instructions.
+    Returns individual relevant chunks instead of combined summaries.
     """
     # Get user instruction embeddings
     instruction_embedding = self.sentence_transformer.encode(
@@ -44,36 +45,17 @@ class ContentExtractor:
           chunk_embeddings
         )
         
-        # Filter relevant chunks (similarity > 0.3)
-        relevant_chunks = [
-          chunks[i] for i in range(len(chunks))
-          if similarities[i] > 0.3
-        ]
-        
-        if relevant_chunks:
-          # Combine relevant chunks
-          combined_text = " ".join(relevant_chunks)
-          
-          # Summarize the relevant content
-          try:
-            summary = self.summarizer(
-              combined_text,
-              max_length=150,
-              min_length=30,
-              do_sample=False
-            )[0]['summary_text']
-          except Exception as e:
-            print(f"Summarization failed for {page['url']}: {str(e)}")
-            summary = combined_text[:500] + "..."
-          
-          extracted_content.append({
-            'url': page['url'],
-            'content': combined_text,
-            'summary': summary,
-            'title': page['title'],
-            'depth': page['depth'],
-            'relevance_score': float(max(similarities))
-          })
+        # Filter relevant chunks (similarity > 0.3) and return each individually
+        for i, chunk in enumerate(chunks):
+          if similarities[i] > 0.6:
+            extracted_content.append({
+              'url': page['url'],
+              'content': chunk,  # Individual chunk instead of combined text
+              'title': page['title'],
+              'depth': page['depth'],
+              'relevance_score': float(similarities[i]),
+              'chunk_index': i  # Add chunk index for reference
+            })
     
     # Sort by relevance score
     extracted_content.sort(
