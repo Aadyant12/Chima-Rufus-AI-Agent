@@ -10,32 +10,43 @@ class WebCrawler:
     self.session = requests.Session()
     self.delay = 1  # Delay between requests in seconds
     self.allowed_domains = allowed_domains or set()
+    self.strict_domain = False
 
-  def crawl(self, start_url: str, max_depth: int = 3) -> List[Dict]:
+  def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
     """
     Crawl website starting from given URL up to specified depth.
     
     Args:
       start_url: URL to start crawling from
       max_depth: Maximum depth of pages to crawl
+      strict_domain: If True, only crawl within the exact subdomain of the starting URL
         
     Returns: List of dictionaries containing page data
     """
+    self.strict_domain = strict_domain
+    
     # Extract base domain from start URL and add to allowed domains
     parsed_start_url = urlparse(start_url)
     base_domain = parsed_start_url.netloc.lower()
-    self.allowed_domains.add(base_domain)
     
-    # Also allow the main domain without subdomain
-    if base_domain.startswith('www.'):
-      self.allowed_domains.add(base_domain[4:])
-    elif not base_domain.startswith('www.'):
-      self.allowed_domains.add(f'www.{base_domain}')
-    
-    # For unitedspinal.org, allow all subdomains
-    if 'unitedspinal.org' in base_domain:
-      self.allowed_domains.add('unitedspinal.org')
-      self.allowed_domains.add('www.unitedspinal.org')
+    if strict_domain:
+      # In strict mode, only allow the exact subdomain
+      print(f"🔒 STRICT DOMAIN MODE: Only crawling {base_domain} and its sub-paths")
+      self.allowed_domains = {base_domain}
+    else:
+      # Original behavior - allow domain variations
+      self.allowed_domains.add(base_domain)
+      
+      # Also allow the main domain without subdomain
+      if base_domain.startswith('www.'):
+        self.allowed_domains.add(base_domain[4:])
+      elif not base_domain.startswith('www.'):
+        self.allowed_domains.add(f'www.{base_domain}')
+      
+      # For unitedspinal.org, allow all subdomains
+      if 'unitedspinal.org' in base_domain:
+        self.allowed_domains.add('unitedspinal.org')
+        self.allowed_domains.add('www.unitedspinal.org')
     
     results = []
     self._crawl_recursive(start_url, 0, max_depth, results)
@@ -113,10 +124,16 @@ class WebCrawler:
       # Domain filtering - only crawl allowed domains
       if self.allowed_domains:
         domain_allowed = False
-        for allowed_domain in self.allowed_domains:
-          if domain == allowed_domain or domain.endswith('.' + allowed_domain):
-            domain_allowed = True
-            break
+        
+        if self.strict_domain:
+          # In strict mode, domain must match exactly
+          domain_allowed = domain in self.allowed_domains
+        else:
+          # Original behavior - allow subdomains
+          for allowed_domain in self.allowed_domains:
+            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
+              domain_allowed = True
+              break
         
         if not domain_allowed:
           return False

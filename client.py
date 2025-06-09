@@ -12,24 +12,26 @@ class RufusClient:
     self.crawler = WebCrawler()
     self.extractor = ContentExtractor()
 
-  def scrape(self, url: str, instructions: str, max_depth: int = 3) -> Union[Dict, List[Dict]]:
+  def scrape(self, url: str, instructions: str, max_depth: int = 3, strict_domain: bool = False) -> Union[Dict, List[Dict]]:
     """
     Scrape and synthesize content from a website based on instructions.
     
     url: Starting URL to scrape
     instructions: User instructions for content extraction
     max_depth: Maximum depth for recursive crawling
+    strict_domain: If True, only crawl within the exact subdomain of the starting URL
     """
     try:
       print(f"\n🚀 STARTING RUFUS WEB SCRAPING")
       print(f"🎯 Target URL: {url}")
       print(f"📋 Instructions: {instructions}")
       print(f"🔍 Max Depth: {max_depth}")
+      print(f"🔒 Strict Domain Mode: {'ON' if strict_domain else 'OFF'}")
       print(f"{'='*60}")
       
       # Crawl the website
       print(f"\n🕷️  STARTING WEB CRAWLING...")
-      pages = self.crawler.crawl(url, max_depth=max_depth)
+      pages = self.crawler.crawl(url, max_depth=max_depth, strict_domain=strict_domain)
       print(f"✅ Crawling completed! Found {len(pages)} pages")
       
       # Extract relevant content based on user instructions
