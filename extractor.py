@@ -57,6 +57,12 @@ class ContentExtractor:
           chunk_embeddings
         )
         
+        # Print similarity scores for all chunks
+        print(f"📊 Cosine similarity scores for all chunks:")
+        for i, chunk in enumerate(chunks):
+          similarity_score = float(similarities[i])
+          print(f"  Chunk {i+1}: {similarity_score:.3f} - {chunk[:100]}{'...' if len(chunk) > 100 else ''}")
+        
         relevant_chunks_found = 0
         # Filter relevant chunks (similarity > 0.6) and return each individually
         for i, chunk in enumerate(chunks):

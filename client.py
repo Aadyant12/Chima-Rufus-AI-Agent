@@ -1,5 +1,7 @@
 import os
 from typing import List, Dict, Union
+import hashlib
+import json
 from crawler import WebCrawler
 from extractor import ContentExtractor
 
@@ -11,6 +13,29 @@ class RufusClient:
     
     self.crawler = WebCrawler()
     self.extractor = ContentExtractor()
+    
+    # Initialize cache for storing scraped results
+    self.crawl_cache = {}  # Cache for raw crawled pages
+    self.extraction_cache = {}  # Cache for processed extraction results
+
+  def _generate_cache_key(self, url: str, max_depth: int, strict_domain: bool) -> str:
+    """Generate a unique cache key for crawl parameters."""
+    cache_data = {
+      'url': url.lower().strip(),
+      'max_depth': max_depth,
+      'strict_domain': strict_domain
+    }
+    cache_string = json.dumps(cache_data, sort_keys=True)
+    return hashlib.md5(cache_string.encode()).hexdigest()
+  
+  def _generate_extraction_cache_key(self, crawl_cache_key: str, instructions: str) -> str:
+    """Generate a unique cache key for extraction parameters."""
+    cache_data = {
+      'crawl_key': crawl_cache_key,
+      'instructions': instructions.lower().strip()
+    }
+    cache_string = json.dumps(cache_data, sort_keys=True)
+    return hashlib.md5(cache_string.encode()).hexdigest()
 
   def scrape(self, url: str, instructions: str, max_depth: int = 3, strict_domain: bool = False) -> Union[Dict, List[Dict]]:
     """
@@ -29,10 +54,33 @@ class RufusClient:
       print(f"🔒 Strict Domain Mode: {'ON' if strict_domain else 'OFF'}")
       print(f"{'='*60}")
       
-      # Crawl the website
-      print(f"\n🕷️  STARTING WEB CRAWLING...")
-      pages = self.crawler.crawl(url, max_depth=max_depth, strict_domain=strict_domain)
-      print(f"✅ Crawling completed! Found {len(pages)} pages")
+      # Generate cache keys
+      crawl_cache_key = self._generate_cache_key(url, max_depth, strict_domain)
+      extraction_cache_key = self._generate_extraction_cache_key(crawl_cache_key, instructions)
+      
+      # Check if we have cached extraction results first
+      if extraction_cache_key in self.extraction_cache:
+        print(f"💾 CACHE HIT! Using cached extraction results")
+        cached_result = self.extraction_cache[extraction_cache_key]
+        print(f"✅ Retrieved {len(cached_result['documents'])} cached documents")
+        print(f"🌐 From {len(cached_result['metadata']['sources'])} cached sources")
+        print(f"{'='*60}")
+        return cached_result
+      
+      # Check if we have cached crawl results
+      if crawl_cache_key in self.crawl_cache:
+        print(f"💾 PARTIAL CACHE HIT! Using cached crawl results")
+        pages = self.crawl_cache[crawl_cache_key]
+        print(f"✅ Retrieved {len(pages)} cached pages")
+      else:
+        # Crawl the website and cache results
+        print(f"\n🕷️  STARTING WEB CRAWLING...")
+        pages = self.crawler.crawl(url, max_depth=max_depth, strict_domain=strict_domain)
+        print(f"✅ Crawling completed! Found {len(pages)} pages")
+        
+        # Cache the crawl results
+        self.crawl_cache[crawl_cache_key] = pages
+        print(f"💾 Cached {len(pages)} pages for future use")
       
       # Extract relevant content based on user instructions
       print(f"\n🧠 STARTING CONTENT EXTRACTION...")
@@ -47,18 +95,38 @@ class RufusClient:
       print(f"🌐 From {len(set(doc['url'] for doc in extracted_content))} unique sources")
       print(f"{'='*60}")
       
-      # return in structured format
-      return {
+      # Structure the result
+      result = {
         'documents': extracted_content,
         'metadata': {
           'document_count': len(extracted_content),
           'sources': list(set(doc['url'] for doc in extracted_content))
         }
       }
+      
+      # Cache the extraction results
+      self.extraction_cache[extraction_cache_key] = result
+      print(f"💾 Cached extraction results for future use")
+      
+      return result
         
     except Exception as e:
       print(f"❌ ERROR: Scraping failed - {str(e)}")
       raise RufusError(f"Scraping failed: {str(e)}")
+  
+  def get_cache_info(self) -> Dict:
+    """Get information about the current cache state."""
+    return {
+      'crawl_cache_entries': len(self.crawl_cache),
+      'extraction_cache_entries': len(self.extraction_cache),
+      'total_cached_pages': sum(len(pages) for pages in self.crawl_cache.values())
+    }
+  
+  def clear_cache(self):
+    """Clear all cached data."""
+    self.crawl_cache.clear()
+    self.extraction_cache.clear()
+    print("🗑️  Cache cleared successfully")
 
 class RufusError(Exception):
   """Custom exception class for Rufus-specific errors."""

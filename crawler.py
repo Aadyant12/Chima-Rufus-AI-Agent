@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from typing import Set, Dict, List
 import time
+import hashlib
 
 class WebCrawler:
   def __init__(self, allowed_domains: Set[str] = None):
@@ -11,6 +12,13 @@ class WebCrawler:
     self.delay = 1  # Delay between requests in seconds
     self.allowed_domains = allowed_domains or set()
     self.strict_domain = False
+    
+    # Add page-level cache
+    self.page_cache: Dict[str, Dict] = {}
+
+  def _get_page_cache_key(self, url: str) -> str:
+    """Generate a cache key for individual pages."""
+    return hashlib.md5(url.encode()).hexdigest()
 
   def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
     """
@@ -60,6 +68,21 @@ class WebCrawler:
       return
 
     try:
+      # Check if page is cached
+      cache_key = self._get_page_cache_key(url)
+      if cache_key in self.page_cache:
+        print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
+        cached_page = self.page_cache[cache_key].copy()
+        cached_page['depth'] = current_depth  # Update depth for current context
+        results.append(cached_page)
+        self.visited_urls.add(url)
+        
+        # Continue crawling links from cached page if not at max depth
+        if current_depth < max_depth:
+          soup = BeautifulSoup(cached_page['html'], 'html.parser')
+          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results)
+        return
+
       print(f"🌐 Crawling [Depth {current_depth}]: {url}")
       time.sleep(self.delay)
       self.visited_urls.add(url)
@@ -75,38 +98,50 @@ class WebCrawler:
       
       print(f"✅ Successfully scraped: {page_title}")
       
-      # Store page data
-      results.append({
+      # Create page data
+      page_data = {
         'url': url,
         'title': page_title,
         'html': response.text,
         'text': soup.get_text(separator=' ', strip=True),
         'depth': current_depth
-      })
+      }
+      
+      # Cache the page (without depth since depth can vary)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store page data
+      results.append(page_data)
       
       # Only continue if we haven't reached max depth
       if current_depth < max_depth:
-        print(f"🔗 Looking for links on: {url}")
-        
-        # Find all links
-        links_found = 0
-        for link in soup.find_all('a', href=True):
-          next_url = urljoin(url, link['href'])
-
-          # Recursively crawl each valid link
-          if self._should_crawl(next_url):
-            links_found += 1
-            self._crawl_recursive(
-              next_url, 
-              current_depth + 1, 
-              max_depth, 
-              results
-            )
-        
-        print(f"📊 Found {links_found} valid links to crawl from {url}")
+        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results)
                 
     except Exception as e:
       print(f"❌ Error crawling {url}: {str(e)}")
+
+  def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict]):
+    """Extract and crawl links from a BeautifulSoup object."""
+    print(f"🔗 Looking for links on: {url}")
+    
+    # Find all links
+    links_found = 0
+    for link in soup.find_all('a', href=True):
+      next_url = urljoin(url, link['href'])
+
+      # Recursively crawl each valid link
+      if self._should_crawl(next_url):
+        links_found += 1
+        self._crawl_recursive(
+          next_url, 
+          current_depth + 1, 
+          max_depth, 
+          results
+        )
+    
+    print(f"📊 Found {links_found} valid links to crawl from {url}")
 
   def _should_crawl(self, url: str) -> bool:
     """
@@ -172,3 +207,15 @@ class WebCrawler:
         
     except Exception:
       return False
+
+  def get_cache_info(self) -> Dict:
+    """Get information about the page cache."""
+    return {
+      'cached_pages': len(self.page_cache),
+      'visited_urls': len(self.visited_urls)
+    }
+  
+  def clear_cache(self):
+    """Clear the page cache."""
+    self.page_cache.clear()
+    print("🗑️  WebCrawler cache cleared")
