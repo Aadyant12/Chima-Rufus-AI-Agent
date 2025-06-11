@@ -99,15 +99,15 @@ class WebCrawler:
         self.allowed_domains.add('www.unitedspinal.org')
     
     results = []
-    # Start with empty path for root URL
-    self._crawl_recursive(start_url, 0, max_depth, results, [])
+    # Start with empty path for root URL and no parent URL for the starting URL
+    self._crawl_recursive(start_url, 0, max_depth, results, [], None)
     return results
 
-  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
+  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None):
     # Recursively crawl pages up to max_depth.
     if (current_depth > max_depth or 
       url in self.visited_urls or 
-      not self._should_crawl(url)):
+      not self._should_crawl(url, parent_url)):
       return
 
     try:
@@ -349,7 +349,8 @@ class WebCrawler:
                 current_depth + 1, 
                 max_depth, 
                 results,
-                path  # Pass the current path
+                path,  # Pass the current path
+                url    # Pass current URL as parent_url
             )
     
     print(f"📊 Found {links_found} valid links to crawl from {url} ({external_links_found} external)")
