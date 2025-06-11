@@ -99,10 +99,11 @@ class WebCrawler:
         self.allowed_domains.add('www.unitedspinal.org')
     
     results = []
-    self._crawl_recursive(start_url, 0, max_depth, results)
+    # Start with empty path for root URL
+    self._crawl_recursive(start_url, 0, max_depth, results, [])
     return results
 
-  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict]):
+  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     # Recursively crawl pages up to max_depth.
     if (current_depth > max_depth or 
       url in self.visited_urls or 
@@ -116,13 +117,15 @@ class WebCrawler:
         print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
         cached_page = self.page_cache[cache_key].copy()
         cached_page['depth'] = current_depth  # Update depth for current context
+        cached_page['navigation_path'] = path.copy()  # Add navigation path
         results.append(cached_page)
         self.visited_urls.add(url)
         
         # Continue crawling links from cached page if not at max depth and not a PDF
         if current_depth < max_depth and not self._is_pdf_url(url):
           soup = BeautifulSoup(cached_page['html'], 'html.parser')
-          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results)
+          current_page_info = {'url': url, 'title': cached_page['title']}
+          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
         return
 
       print(f"🌐 Crawling [Depth {current_depth}]: {url}")
@@ -153,11 +156,13 @@ class WebCrawler:
         'text': soup.get_text(separator=' ', strip=True),
         'depth': current_depth,
         'content_type': 'html'
+        'navigation_path': path.copy()  # Add navigation path
       }
       
-      # Cache the page (without depth since depth can vary)
+      # Cache the page (without depth and path since they can vary)
       cache_data = page_data.copy()
       del cache_data['depth']
+      del cache_data['navigation_path']
       self.page_cache[cache_key] = cache_data
       
       # Store page data
@@ -165,7 +170,8 @@ class WebCrawler:
       
       # Only continue if we haven't reached max depth
       if current_depth < max_depth:
-        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results)
+        current_page_info = {'url': url, 'title': page_title}
+        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
                 
     except Exception as e:
       print(f"❌ Error crawling {url}: {str(e)}")
@@ -216,7 +222,7 @@ class WebCrawler:
     except Exception as e:
       print(f"❌ Error processing PDF {url}: {str(e)}")
 
-  def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict]):
+def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     """Extract and crawl links from a BeautifulSoup object."""
     print(f"🔗 Looking for links on: {url}")
     
@@ -232,7 +238,8 @@ class WebCrawler:
           next_url, 
           current_depth + 1, 
           max_depth, 
-          results
+          results,
+          path  # Pass the current path
         )
     
     print(f"📊 Found {links_found} valid links to crawl from {url}")
