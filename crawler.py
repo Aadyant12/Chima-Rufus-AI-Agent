@@ -155,7 +155,7 @@ class WebCrawler:
         'html': response.text,
         'text': soup.get_text(separator=' ', strip=True),
         'depth': current_depth,
-        'content_type': 'html'
+        'content_type': 'html',
         'navigation_path': path.copy()  # Add navigation path
       }
       
@@ -222,110 +222,146 @@ class WebCrawler:
     except Exception as e:
       print(f"❌ Error processing PDF {url}: {str(e)}")
 
-def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
+  def _should_crawl(self, url: str, current_url: str = None) -> bool:
+    """
+    Determine if URL should be crawled based on various rules.
+    Now includes domain filtering with external link allowance.
+    """
+    try:
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        
+        # Check URL scheme
+        if parsed_url.scheme not in ('http', 'https'):
+            return False
+        
+        # Domain filtering logic
+        if self.allowed_domains:
+            is_internal_domain = self._is_internal_domain(domain)
+            
+            if is_internal_domain:
+                # Always allow internal domains
+                pass
+            else:
+                # External domain - only allow if we're coming from an internal domain
+                if current_url:
+                    current_parsed = urlparse(current_url)
+                    current_domain = current_parsed.netloc.lower()
+                    is_current_internal = self._is_internal_domain(current_domain)
+                    
+                    if not is_current_internal:
+                        # We're on an external domain, don't crawl more external links
+                        return False
+                else:
+                    # No current URL context, block external domains
+                    return False
+        
+        # Exclude common social media and external platforms
+        excluded_domains = [
+            'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com',
+            'youtube.com', 'tiktok.com', 'snapchat.com', 'pinterest.com',
+            'reddit.com', 'tumblr.com', 'flickr.com', 'vimeo.com',
+            'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
+            'apple.com', 'microsoft.com', 'adobe.com', 'paypal.com'
+        ]
+        
+        for excluded in excluded_domains:
+            if domain == excluded or domain.endswith('.' + excluded):
+                return False
+        
+        # Handle PDF files
+        if parsed_url.path.lower().endswith('.pdf'):
+            return self.parse_pdfs  # Only allow PDFs if PDF parsing is enabled
+            
+        # Ignore common non-HTML extensions (excluding PDF when PDF parsing is enabled)
+        ignored_extensions = [
+            '.jpg', '.jpeg', '.png', '.gif', '.doc', 
+            '.docx', '.ppt', '.pptx', '.zip', '.tar', '.gz',
+            '.mp4', '.avi', '.mov', '.mp3', '.wav', '.exe'
+        ]
+        
+        # Add PDF to ignored extensions only if PDF parsing is disabled
+        if not self.parse_pdfs:
+            ignored_extensions.append('.pdf')
+        
+        if any(parsed_url.path.lower().endswith(ext) for ext in ignored_extensions):
+            return False
+        
+        # Skip common non-content paths
+        ignored_paths = [
+            '/api/', '/admin/', '/login/', '/logout/', '/register/',
+            '/wp-admin/', '/wp-content/', '/node_modules/', '/assets/'
+        ]
+        if any(ignored_path in parsed_url.path.lower() for ignored_path in ignored_paths):
+            return False
+        
+        return True
+            
+    except Exception:
+        return False
+
+  def _is_internal_domain(self, domain: str) -> bool:
+    """Check if a domain is considered internal (allowed)."""
+    if self.strict_domain:
+        # In strict mode, domain must match exactly
+        return domain in self.allowed_domains
+    else:
+        # Original behavior - allow subdomains
+        for allowed_domain in self.allowed_domains:
+            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
+                return True
+        return False
+
+  def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     """Extract and crawl links from a BeautifulSoup object."""
     print(f"🔗 Looking for links on: {url}")
     
+    # Check if current page is external
+    parsed_current = urlparse(url)
+    current_domain = parsed_current.netloc.lower()
+    is_current_internal = self._is_internal_domain(current_domain)
+    
+    if not is_current_internal:
+        print(f"🚫 On external domain {current_domain} - will not crawl any links from this page")
+        return
+    
     # Find all links
     links_found = 0
-    for link in soup.find_all('a', href=True):
-      next_url = urljoin(url, link['href'])
-
-      # Recursively crawl each valid link
-      if self._should_crawl(next_url):
-        links_found += 1
-        self._crawl_recursive(
-          next_url, 
-          current_depth + 1, 
-          max_depth, 
-          results,
-          path  # Pass the current path
-        )
+    external_links_found = 0
     
-    print(f"📊 Found {links_found} valid links to crawl from {url}")
+    for link in soup.find_all('a', href=True):
+        next_url = urljoin(url, link['href'])
+        
+        # Check if this link is external
+        parsed_next = urlparse(next_url)
+        next_domain = parsed_next.netloc.lower()
+        is_next_internal = self._is_internal_domain(next_domain)
+        
+        # Recursively crawl each valid link
+        if self._should_crawl(next_url, url):  # Pass current URL for context
+            links_found += 1
+            if not is_next_internal:
+                external_links_found += 1
+                print(f"🌍 Following external link: {next_url}")
+            
+            self._crawl_recursive(
+                next_url, 
+                current_depth + 1, 
+                max_depth, 
+                results,
+                path  # Pass the current path
+            )
+    
+    print(f"📊 Found {links_found} valid links to crawl from {url} ({external_links_found} external)")
 
-  def _should_crawl(self, url: str) -> bool:
-    """
-    Determine if URL should be crawled based on various rules.
-    Now includes domain filtering to stay within allowed domains.
-    """
-    try:
-      parsed_url = urlparse(url)
-      domain = parsed_url.netloc.lower()
-      
-      # Check URL scheme
-      if parsed_url.scheme not in ('http', 'https'):
-        return False
-      
-      # Domain filtering - only crawl allowed domains
-      if self.allowed_domains:
-        domain_allowed = False
-        
-        if self.strict_domain:
-          # In strict mode, domain must match exactly
-          domain_allowed = domain in self.allowed_domains
-        else:
-          # Original behavior - allow subdomains
-          for allowed_domain in self.allowed_domains:
-            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
-              domain_allowed = True
-              break
-        
-        if not domain_allowed:
-          return False
-      
-      # Exclude common social media and external platforms
-      excluded_domains = [
-        'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com',
-        'youtube.com', 'tiktok.com', 'snapchat.com', 'pinterest.com',
-        'reddit.com', 'tumblr.com', 'flickr.com', 'vimeo.com',
-        'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
-        'apple.com', 'microsoft.com', 'adobe.com', 'paypal.com'
-      ]
-      
-      for excluded in excluded_domains:
-        if domain == excluded or domain.endswith('.' + excluded):
-          return False
-      
-      # Handle PDF files
-      if parsed_url.path.lower().endswith('.pdf'):
-        return self.parse_pdfs  # Only allow PDFs if PDF parsing is enabled
-          
-      # Ignore common non-HTML extensions (excluding PDF when PDF parsing is enabled)
-      ignored_extensions = [
-        '.jpg', '.jpeg', '.png', '.gif', '.doc', 
-        '.docx', '.ppt', '.pptx', '.zip', '.tar', '.gz',
-        '.mp4', '.avi', '.mov', '.mp3', '.wav', '.exe'
-      ]
-      
-      # Add PDF to ignored extensions only if PDF parsing is disabled
-      if not self.parse_pdfs:
-        ignored_extensions.append('.pdf')
-      
-      if any(parsed_url.path.lower().endswith(ext) for ext in ignored_extensions):
-        return False
-      
-      # Skip common non-content paths
-      ignored_paths = [
-        '/api/', '/admin/', '/login/', '/logout/', '/register/',
-        '/wp-admin/', '/wp-content/', '/node_modules/', '/assets/'
-      ]
-      if any(ignored_path in parsed_url.path.lower() for ignored_path in ignored_paths):
-        return False
-      
-      return True
-        
-    except Exception:
-      return False
-
-  def get_cache_info(self) -> Dict:
+def get_cache_info(self) -> Dict:
     """Get information about the page cache."""
     return {
       'cached_pages': len(self.page_cache),
       'visited_urls': len(self.visited_urls)
     }
   
-  def clear_cache(self):
+def clear_cache(self):
     """Clear the page cache."""
     self.page_cache.clear()
     print("🗑️  WebCrawler cache cleared")
