@@ -58,6 +58,284 @@ class WebCrawler:
     parsed_url = urlparse(url)
     return parsed_url.path.lower().endswith('.pdf')
 
+  def _extract_main_content(self, soup: BeautifulSoup, url: str) -> str:
+    """
+    Extract main content from HTML, filtering out headers, footers, navigation, ads, etc.
+    """
+    print(f"🧹 Filtering HTML content for: {url}")
+    
+    # Strategy 1: Remove unwanted elements by tag and class/id patterns
+    unwanted_selectors = [
+        # Navigation elements
+        'nav', 'header', 'footer', '.nav', '.navigation', '.navbar', 
+        '#navigation', '#nav', '.menu', '.main-menu',
+        
+        # Ads and promotional content
+        '.ad', '.ads', '.advertisement', '.promo', '.promotion', 
+        '.banner', '.sidebar-ads', '[class*="ad-"]', '[id*="ad-"]',
+        '.google-ad', '.adsense', '.adsbygoogle',
+        
+        # Social media and sharing
+        '.social', '.share', '.sharing', '.social-media', '.social-share',
+        '.twitter', '.facebook', '.linkedin', '.instagram',
+        
+        # Comments sections (optional - remove if you want comments)
+        '.comments', '.comment', '.user-comments', '#comments',
+        
+        # Other common non-content elements
+        '.sidebar', '.side-bar', '.widget', '.widgets',
+        '.breadcrumb', '.breadcrumbs', '.pagination',
+        '.newsletter', '.subscription', '.subscribe',
+        '.popup', '.modal', '.overlay',
+        '.cookie', '.cookie-notice', '.cookie-banner',
+        
+        # Generic utility classes
+        '.hidden', '.hide', '.invisible', '[style*="display:none"]',
+        '.sr-only', '.screen-reader-text'
+    ]
+    
+    # Remove unwanted elements
+    removed_count = 0
+    for selector in unwanted_selectors:
+        elements = soup.select(selector)
+        for element in elements:
+            element.decompose()  # Completely remove from DOM
+            removed_count += 1
+    
+    print(f"🗑️  Removed {removed_count} unwanted HTML elements")
+    
+    # Strategy 2: Try to identify main content area
+    main_content = self._find_main_content_area(soup)
+    
+    if main_content:
+        print(f"✅ Found main content area")
+        content_text = main_content.get_text(separator=' ', strip=True)
+    else:
+        print(f"⚠️  No main content area found, using body")
+        # Fallback: use body but with additional filtering
+        body = soup.find('body')
+        if body:
+            content_text = body.get_text(separator=' ', strip=True)
+        else:
+            content_text = soup.get_text(separator=' ', strip=True)
+    
+    # Strategy 3: Clean up the extracted text
+    content_text = self._clean_extracted_text(content_text)
+    
+    print(f"📏 Final HTML content length: {len(content_text)} characters")
+    return content_text
+
+  def _find_main_content_area(self, soup):
+    """
+    Try to identify the main content area using common patterns.
+    """
+    # Common selectors for main content areas (in order of preference)
+    main_content_selectors = [
+        'main',
+        'article', 
+        '.main-content',
+        '.content',
+        '.post-content',
+        '.entry-content',
+        '.article-content',
+        '.page-content',
+        '#main-content',
+        '#content',
+        '#main',
+        '.container .content',
+        '.wrapper .content'
+    ]
+    
+    for selector in main_content_selectors:
+        element = soup.select_one(selector)
+        if element:
+            # Check if this element has substantial content
+            text_length = len(element.get_text(strip=True))
+            if text_length > 200:  # Minimum content threshold
+                print(f"🎯 Found main content using selector: {selector}")
+                return element
+    
+    # If no main content area found, try to find the largest text block
+    return self._find_largest_content_block(soup)
+
+  def _find_largest_content_block(self, soup):
+    """
+    Find the HTML element with the most text content (likely the main content).
+    """
+    candidates = soup.find_all(['div', 'section', 'article', 'main'])
+    
+    best_candidate = None
+    best_score = 0
+    
+    for candidate in candidates:
+        # Calculate content score based on text length and structure
+        text_length = len(candidate.get_text(strip=True))
+        
+        # Bonus for semantic HTML elements
+        tag_bonus = 0
+        if candidate.name in ['article', 'main', 'section']:
+            tag_bonus = 100
+        
+        # Penalty for likely non-content areas
+        class_penalty = 0
+        classes = ' '.join(candidate.get('class', []))
+        if any(word in classes.lower() for word in ['sidebar', 'nav', 'header', 'footer', 'ad']):
+            class_penalty = 500
+        
+        score = text_length + tag_bonus - class_penalty
+        
+        if score > best_score and text_length > 200:
+            best_score = score
+            best_candidate = candidate
+    
+    if best_candidate:
+        print(f"🔍 Found largest content block with score: {best_score}")
+    
+    return best_candidate
+
+  def _clean_extracted_text(self, text: str) -> str:
+    """
+    Clean and normalize the extracted text content (works for both HTML and PDF).
+    """
+    import re
+    
+    # Remove excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove common navigational text patterns
+    nav_patterns = [
+        r'Home\s*>\s*',
+        r'Skip to (?:main )?content',
+        r'Menu\s*Toggle',
+        r'Search\s*for:',
+        r'Categories?\s*:',
+        r'Tags?\s*:',
+        r'Share\s*this\s*(?:post|article|page)',
+        r'Follow\s*us\s*on',
+        r'Subscribe\s*to\s*our',
+        r'Cookie\s*(?:Policy|Notice)',
+        r'Privacy\s*Policy',
+        r'Terms\s*(?:of\s*(?:Service|Use))?',
+        r'Copyright\s*©',
+        r'All\s*rights\s*reserved'
+    ]
+    
+    for pattern in nav_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Final cleanup
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+  def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
+    """
+    Clean and filter PDF text content to remove headers, footers, page numbers, etc.
+    """
+    import re
+    
+    print(f"🧹 Filtering PDF content for: {url}")
+    
+    # Split into lines for processing
+    lines = pdf_text.split('\n')
+    cleaned_lines = []
+    
+    # Common PDF artifacts to remove
+    pdf_artifacts = [
+        # Page numbers (various formats)
+        r'^\s*\d+\s*$',  # Just a number
+        r'^\s*Page\s+\d+\s*$',  # "Page 1"
+        r'^\s*\d+\s+of\s+\d+\s*$',  # "1 of 10"
+        r'^\s*-\s*\d+\s*-\s*$',  # "- 1 -"
+        
+        # Headers/footers that repeat
+        r'^\s*(?:confidential|proprietary|draft|internal)\s*$',
+        
+        # URLs at top/bottom of pages
+        r'^(?:https?://|www\.)',
+        
+        # Email addresses in headers/footers
+        r'^\s*[\w\.-]+@[\w\.-]+\.\w+\s*$',
+        
+        # Copyright notices
+        r'^\s*©.*\d{4}',
+        r'^\s*Copyright.*\d{4}',
+        
+        # Common footer text
+        r'^\s*All rights reserved\s*$',
+        r'^\s*Confidential and Proprietary\s*$',
+    ]
+    
+    removed_lines = 0
+    for line in lines:
+        line = line.strip()
+        
+        # Skip empty lines
+        if not line:
+            continue
+            
+        # Check if line matches any artifact pattern
+        is_artifact = False
+        for pattern in pdf_artifacts:
+            if re.match(pattern, line, re.IGNORECASE):
+                is_artifact = True
+                removed_lines += 1
+                break
+        
+        # Skip very short lines (likely artifacts) unless they contain meaningful punctuation
+        if len(line) < 3 and not any(punct in line for punct in ['.', '!', '?', ':']):
+            is_artifact = True
+            removed_lines += 1
+        
+        if not is_artifact:
+            cleaned_lines.append(line)
+    
+    print(f"🗑️  Removed {removed_lines} PDF artifact lines")
+    
+    # Rejoin lines
+    cleaned_text = ' '.join(cleaned_lines)
+    
+    # Apply general text cleaning
+    cleaned_text = self._clean_extracted_text(cleaned_text)
+    
+    # Additional PDF-specific cleaning
+    # Remove repeated headers/footers (text that appears multiple times)
+    cleaned_text = self._remove_repeated_content(cleaned_text)
+    
+    print(f"📏 Final PDF content length: {len(cleaned_text)} characters")
+    return cleaned_text
+
+  def _remove_repeated_content(self, text: str) -> str:
+    """
+    Remove content that appears to be repeated headers/footers in PDFs.
+    """
+    import re
+    
+    # Split into sentences for analysis
+    sentences = re.split(r'[.!?]+', text)
+    sentence_counts = {}
+    
+    # Count occurrences of each sentence
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(sentence) > 10:  # Only count substantial sentences
+            sentence_counts[sentence] = sentence_counts.get(sentence, 0) + 1
+    
+    # Find sentences that appear too frequently (likely headers/footers)
+    repeated_sentences = []
+    for sentence, count in sentence_counts.items():
+        if count > 2 and len(sentence) < 100:  # Short sentences repeated many times
+            repeated_sentences.append(sentence)
+    
+    # Remove repeated sentences
+    for repeated in repeated_sentences:
+        text = text.replace(repeated, '')
+    
+    if repeated_sentences:
+        print(f"🔄 Removed {len(repeated_sentences)} repeated content patterns")
+    
+    return text
+
   def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
     """
     Crawl website starting from given URL up to specified depth.
@@ -150,15 +428,18 @@ class WebCrawler:
       
       print(f"✅ Successfully scraped: {page_title}")
       
+      # Extract main content with filtering
+      clean_text = self._extract_main_content(soup, url)
+      
       # Create page data
       page_data = {
         'url': url,
         'title': page_title,
         'html': response.text,
-        'text': soup.get_text(separator=' ', strip=True),
+        'text': clean_text,  # Use filtered content instead of soup.get_text()
         'depth': current_depth,
         'content_type': 'html',
-        'navigation_path': path.copy()  # Add navigation path
+        'navigation_path': path.copy()
       }
       
       # Cache the page (without depth and path since they can vary)
@@ -196,20 +477,24 @@ class WebCrawler:
         print(f"⚠️  No text extracted from PDF: {url}")
         return
       
+      # Clean and filter PDF text
+      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
+      
       # Get PDF title from URL or content
       pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
       
       print(f"✅ Successfully extracted text from PDF: {pdf_title}")
-      print(f"📊 Extracted {len(pdf_text)} characters from {url}")
+      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
       
       # Create page data for PDF
       page_data = {
         'url': url,
         'title': pdf_title,
         'html': '',  # PDFs don't have HTML
-        'text': pdf_text,
+        'text': clean_pdf_text,  # Use cleaned PDF text
         'depth': current_depth,
-        'content_type': 'pdf'
+        'content_type': 'pdf',
+        'navigation_path': path.copy()  # Add navigation path for PDFs too
       }
       
       # Cache the PDF data
