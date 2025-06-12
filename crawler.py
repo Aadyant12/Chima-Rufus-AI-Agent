@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from typing import Set, Dict, List
+from typing import Set, Dict, List, Optional
 import time
 import hashlib
 import io
@@ -125,7 +125,7 @@ class WebCrawler:
     print(f"📏 Final HTML content length: {len(content_text)} characters")
     return content_text
 
-  def _find_main_content_area(self, soup):
+  def _find_main_content_area(self, soup) -> Optional[BeautifulSoup]:
     """
     Try to identify the main content area using common patterns.
     """
@@ -158,7 +158,7 @@ class WebCrawler:
     # If no main content area found, try to find the largest text block
     return self._find_largest_content_block(soup)
 
-  def _find_largest_content_block(self, soup):
+  def _find_largest_content_block(self, soup) -> Optional[BeautifulSoup]:
     """
     Find the HTML element with the most text content (likely the main content).
     """
@@ -394,6 +394,7 @@ class WebCrawler:
       if cache_key in self.page_cache:
         print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
         cached_page = self.page_cache[cache_key].copy()
+        # The text should already be filtered since we store filtered content
         cached_page['depth'] = current_depth  # Update depth for current context
         cached_page['navigation_path'] = path.copy()  # Add navigation path
         results.append(cached_page)
@@ -643,13 +644,25 @@ class WebCrawler:
     print(f"📊 Found {links_found} valid links to crawl from {url} ({external_links_found} external)")
 
 def get_cache_info(self) -> Dict:
-    """Get information about the page cache."""
+    """
+    Get information about the page cache.
+    
+    Example:
+        client.crawler.get_cache_info()
+        # Returns: {'cached_pages': 10, 'visited_urls': 15}
+    """
     return {
       'cached_pages': len(self.page_cache),
       'visited_urls': len(self.visited_urls)
     }
   
 def clear_cache(self):
-    """Clear the page cache."""
+    """
+    Clear the page cache.
+    
+    Example:
+        client.crawler.clear_cache()
+        # Clears all cached pages and prints confirmation
+    """
     self.page_cache.clear()
     print("🗑️  WebCrawler cache cleared")
