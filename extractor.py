@@ -96,16 +96,21 @@ class ContentExtractor:
             
             print(f"📊 Relevance Score: {float(similarities[i]):.3f}")
             print(f"📝 Content Preview: {chunk[:200]}{'...' if len(chunk) > 200 else ''}")
+            print(f"📏 Full content length: {len(page['text'])} characters")
+            print(f"🔢 Content type: {page.get('content_type', 'html')}")
             print(f"{'='*60}")
             
             extracted_content.append({
               'url': page['url'],
-              'content': chunk,  # Individual chunk instead of combined text
+              'content': chunk,  # Individual relevant chunk
+              'full_content': page['text'],  # Add full cleaned content from the page/PDF
               'title': page['title'],
               'depth': page['depth'],
               'relevance_score': float(similarities[i]),
               'chunk_index': i,  # Add chunk index for reference
-              'navigation_path': page.get('navigation_path', [])  # Add navigation path
+              'navigation_path': page.get('navigation_path', []),  # Add navigation path
+              'content_type': page.get('content_type', 'html'),  # Add content type (html/pdf)
+              'total_chunks': len(chunks)  # Add total number of chunks for context
             })
         
         print(f"📊 Page summary: {relevant_chunks_found}/{len(chunks)} chunks were relevant")
