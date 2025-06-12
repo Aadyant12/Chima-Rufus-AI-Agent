@@ -1,11 +1,11 @@
-# Rufus - Intelligent Web Crawling for RAG Pipelines
+# Rufus - Intelligent Web Crawling Library
 
-Rufus is a sophisticated web crawling and content extraction library specifically designed for RAG (Retrieval-Augmented Generation) pipelines. It combines intelligent web crawling capabilities with semantic content extraction to gather relevant information based on specific user instructions.
+Rufus is a sophisticated web crawling and content extraction library that combines intelligent crawling capabilities with semantic content extraction. It helps you gather specific information from websites based on natural language instructions.
 
 ## 🌟 Key Features
 
 - **Smart Web Crawling**: Recursively crawls websites with configurable depth and domain restrictions
-- **Semantic Content Extraction**: Uses transformer models to extract relevant content based on user instructions
+- **Semantic Search**: Uses AI to find relevant content based on your natural language instructions
 - **PDF Support**: Optional PDF parsing and content extraction
 - **Intelligent Caching**: Built-in caching system for both crawled pages and extracted content
 - **Navigation Path Tracking**: Maintains complete navigation paths for extracted content
@@ -66,17 +66,17 @@ for doc in documents['documents']:
 ### Scraping Parameters
 
 - `url` (str): Starting URL for crawling
-- `instructions` (str): Natural language instructions for content extraction
+- `instructions` (str): Natural language instructions for finding relevant content
 
-## 🧠 Content Extraction
+## 🧠 How It Works
 
 Rufus uses the `sentence-transformers/all-MiniLM-L6-v2` model for semantic content extraction. The process involves:
 
-1. Splitting content into manageable chunks
-2. Generating embeddings for instructions and content
-3. Computing similarity scores
-4. Filtering relevant content based on threshold
-5. Sorting results by relevance
+1. Crawling the website and gathering content
+2. Breaking content into manageable chunks
+3. Using AI to match your instructions with relevant content
+4. Sorting results by relevance
+5. Providing a clean, filtered output
 
 ## 🌐 Web Crawling Features
 
@@ -90,7 +90,7 @@ Rufus uses the `sentence-transformers/all-MiniLM-L6-v2` model for semantic conte
 
 Rufus implements a two-level caching system:
 
-1. **Crawl Cache**: Stores raw crawled pages
+1. **Crawl Cache**: Stores previously crawled pages
 2. **Extraction Cache**: Stores processed and extracted content
 
 Access cache information:
