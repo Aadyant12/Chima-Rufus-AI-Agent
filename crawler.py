@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from typing import Set, Dict, List
 import time
 import hashlib
@@ -30,9 +30,60 @@ class WebCrawler:
     # Add page-level cache
     self.page_cache: Dict[str, Dict] = {}
 
+  def _normalize_url(self, url: str) -> str:
+    """
+    Normalize URL to avoid duplicates from:
+    - Fragment identifiers (#section)
+    - Trailing slashes
+    - Common index files (index.php, index.html)
+    - Case differences in domain
+    """
+    parsed = urlparse(url)
+    
+    # Convert domain to lowercase
+    netloc = parsed.netloc.lower()
+    
+    # Remove fragment
+    fragment = ''
+    
+    # Normalize path
+    path = parsed.path
+    
+    # Remove trailing slash unless it's the root path
+    if path.endswith('/') and len(path) > 1:
+        path = path.rstrip('/')
+    
+    # Handle common index files
+    index_files = ['/index.php', '/index.html', '/index.htm']
+    for index_file in index_files:
+        if path.endswith(index_file):
+            # Remove index file, but keep the directory path
+            path = path[:-len(index_file)]
+            # If path is empty, make it root
+            if not path:
+                path = '/'
+            break
+    
+    # If path is empty, make it root
+    if not path:
+        path = '/'
+    
+    # Reconstruct URL without fragment
+    normalized = urlunparse((
+        parsed.scheme,
+        netloc,
+        path,
+        parsed.params,
+        parsed.query,
+        fragment
+    ))
+    
+    return normalized
+
   def _get_page_cache_key(self, url: str) -> str:
-    """Generate a cache key for individual pages."""
-    return hashlib.md5(url.encode()).hexdigest()
+    """Generate a cache key for individual pages using normalized URL."""
+    normalized_url = self._normalize_url(url)
+    return hashlib.md5(normalized_url.encode()).hexdigest()
 
   def _extract_pdf_text(self, pdf_content: bytes) -> str:
     """Extract text from PDF content."""
@@ -382,22 +433,28 @@ class WebCrawler:
     return results
 
   def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None):
-    # Recursively crawl pages up to max_depth.
+    # Normalize URL for deduplication
+    normalized_url = self._normalize_url(url)
+    
+    # Check against normalized URL for deduplication
     if (current_depth > max_depth or 
-      url in self.visited_urls or 
+      normalized_url in self.visited_urls or 
       not self._should_crawl(url, parent_url)):
       return
 
     try:
-      # Check if page is cached
+      # Check if page is cached using normalized URL
       cache_key = self._get_page_cache_key(url)
       if cache_key in self.page_cache:
         print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
+        print(f"🔗 Normalized to: {normalized_url}")
         cached_page = self.page_cache[cache_key].copy()
-        cached_page['depth'] = current_depth  # Update depth for current context
-        cached_page['navigation_path'] = path.copy()  # Add navigation path
+        cached_page['depth'] = current_depth
+        cached_page['navigation_path'] = path.copy()
+        # Use original URL in results, not normalized
+        cached_page['url'] = url
         results.append(cached_page)
-        self.visited_urls.add(url)
+        self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
         
         # Continue crawling links from cached page if not at max depth and not a PDF
         if current_depth < max_depth and not self._is_pdf_url(url):
@@ -407,14 +464,16 @@ class WebCrawler:
         return
 
       print(f"🌐 Crawling [Depth {current_depth}]: {url}")
+      if url != normalized_url:
+        print(f"🔗 Normalized to: {normalized_url}")
       time.sleep(self.delay)
-      self.visited_urls.add(url)
+      self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
       
       # Handle PDF files differently
       if self._is_pdf_url(url):
         print(f"🔍 PDF DETECTED: {url}")
         print(f"📄 Starting PDF scraping process...")
-        self._process_pdf(url, current_depth, results)
+        self._process_pdf(url, current_depth, results, path)
         return
       
       # Make request for HTML content
@@ -431,12 +490,12 @@ class WebCrawler:
       # Extract main content with filtering
       clean_text = self._extract_main_content(soup, url)
       
-      # Create page data
+      # Create page data (keep original URL for display purposes)
       page_data = {
-        'url': url,
+        'url': url,  # Keep original URL
         'title': page_title,
         'html': response.text,
-        'text': clean_text,  # Use filtered content instead of soup.get_text()
+        'text': clean_text,
         'depth': current_depth,
         'content_type': 'html',
         'navigation_path': path.copy()
@@ -459,7 +518,7 @@ class WebCrawler:
     except Exception as e:
       print(f"❌ Error crawling {url}: {str(e)}")
 
-  def _process_pdf(self, url: str, current_depth: int, results: List[Dict]):
+  def _process_pdf(self, url: str, current_depth: int, results: List[Dict], path: List[Dict]):
     """Process a PDF file."""
     try:
       print(f"📄 Processing PDF [Depth {current_depth}]: {url}")
@@ -491,16 +550,17 @@ class WebCrawler:
         'url': url,
         'title': pdf_title,
         'html': '',  # PDFs don't have HTML
-        'text': clean_pdf_text,  # Use cleaned PDF text
+        'text': clean_pdf_text,
         'depth': current_depth,
         'content_type': 'pdf',
-        'navigation_path': path.copy()  # Add navigation path for PDFs too
+        'navigation_path': path.copy()
       }
       
       # Cache the PDF data
       cache_key = self._get_page_cache_key(url)
       cache_data = page_data.copy()
       del cache_data['depth']
+      del cache_data['navigation_path']
       self.page_cache[cache_key] = cache_data
       
       # Store PDF data

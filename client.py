@@ -4,6 +4,7 @@ import hashlib
 import json
 from crawler import WebCrawler
 from extractor import ContentExtractor
+from urllib.parse import urlparse, urlunparse
 
 class RufusClient:
   def __init__(self, chunk_size: int = 1024, similarity_threshold: float = 0.6, parse_pdfs: bool = False, max_depth: int = 3, strict_domain: bool = False):
@@ -22,11 +23,13 @@ class RufusClient:
 
   def _generate_cache_key(self, url: str, max_depth: int, strict_domain: bool) -> str:
     """Generate a unique cache key for crawl parameters."""
+    # Normalize URL before generating cache key
+    normalized_url = self._normalize_url(url)
     cache_data = {
-      'url': url.lower().strip(),
+      'url': normalized_url,  # Use normalized URL
       'max_depth': max_depth,
       'strict_domain': strict_domain,
-      'parse_pdfs': self.parse_pdfs  # Include PDF parsing setting in cache key
+      'parse_pdfs': self.parse_pdfs
     }
     cache_string = json.dumps(cache_data, sort_keys=True)
     return hashlib.md5(cache_string.encode()).hexdigest()
@@ -138,6 +141,56 @@ class RufusClient:
     self.extraction_cache.clear()
     self.crawler.clear_cache()  # Also clear crawler's page cache
     print("🗑️  All caches cleared successfully")
+
+  def _normalize_url(self, url: str) -> str:
+    """
+    Normalize URL to avoid duplicates from:
+    - Fragment identifiers (#section)
+    - Trailing slashes
+    - Common index files (index.php, index.html)
+    - Case differences in domain
+    """
+    parsed = urlparse(url)
+    
+    # Convert domain to lowercase
+    netloc = parsed.netloc.lower()
+    
+    # Remove fragment
+    fragment = ''
+    
+    # Normalize path
+    path = parsed.path
+    
+    # Remove trailing slash unless it's the root path
+    if path.endswith('/') and len(path) > 1:
+        path = path.rstrip('/')
+    
+    # Handle common index files
+    index_files = ['/index.php', '/index.html', '/index.htm']
+    for index_file in index_files:
+        if path.endswith(index_file):
+            # Remove index file, but keep the directory path
+            path = path[:-len(index_file)]
+            # If path is empty, make it root
+            if not path:
+                path = '/'
+            break
+    
+    # If path is empty, make it root
+    if not path:
+        path = '/'
+    
+    # Reconstruct URL without fragment
+    normalized = urlunparse((
+        parsed.scheme,
+        netloc,
+        path,
+        parsed.params,
+        parsed.query,
+        fragment
+    ))
+    
+    return normalized
 
 class RufusError(Exception):
   """Custom exception class for Rufus-specific errors."""
