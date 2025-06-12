@@ -134,6 +134,8 @@ class WebCrawler:
       
       # Handle PDF files differently
       if self._is_pdf_url(url):
+        print(f"🔍 PDF DETECTED: {url}")
+        print(f"📄 Starting PDF scraping process...")
         self._process_pdf(url, current_depth, results)
         return
       
