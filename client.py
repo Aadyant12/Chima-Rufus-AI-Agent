@@ -6,12 +6,10 @@ from crawler import WebCrawler
 from extractor import ContentExtractor
 
 class RufusClient:
-  def __init__(self, api_key: str = None, chunk_size: int = 1024, similarity_threshold: float = 0.6, parse_pdfs: bool = False):
-    self.api_key = api_key or os.getenv('RUFUS_API_KEY')
-    if not self.api_key or self.api_key != "loved_the_assignment":
-        raise ValueError("API key is required.")
-    
+  def __init__(self, chunk_size: int = 1024, similarity_threshold: float = 0.6, parse_pdfs: bool = False, max_depth: int = 3, strict_domain: bool = False):
     self.parse_pdfs = parse_pdfs
+    self.max_depth = max_depth
+    self.strict_domain = strict_domain
     self.crawler = WebCrawler(parse_pdfs=parse_pdfs)
     self.extractor = ContentExtractor(chunk_size=chunk_size, similarity_threshold=similarity_threshold)
     
@@ -42,16 +40,20 @@ class RufusClient:
     cache_string = json.dumps(cache_data, sort_keys=True)
     return hashlib.md5(cache_string.encode()).hexdigest()
 
-  def scrape(self, url: str, instructions: str, max_depth: int = 3, strict_domain: bool = False) -> Union[Dict, List[Dict]]:
+  def scrape(self, url: str, instructions: str, max_depth: int = None, strict_domain: bool = None) -> Union[Dict, List[Dict]]:
     """
     Scrape and synthesize content from a website based on instructions.
     
     url: Starting URL to scrape
     instructions: User instructions for content extraction
-    max_depth: Maximum depth for recursive crawling
-    strict_domain: If True, only crawl within the exact subdomain of the starting URL
+    max_depth: Maximum depth for recursive crawling (overrides instance value if provided)
+    strict_domain: If True, only crawl within the exact subdomain of the starting URL (overrides instance value if provided)
     """
     try:
+      # Use instance values if method parameters are not provided
+      max_depth = max_depth if max_depth is not None else self.max_depth
+      strict_domain = strict_domain if strict_domain is not None else self.strict_domain
+
       print(f"\n🚀 STARTING RUFUS WEB SCRAPING")
       print(f"🎯 Target URL: {url}")
       print(f"📋 Instructions: {instructions}")
