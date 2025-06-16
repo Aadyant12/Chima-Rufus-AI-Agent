@@ -115,6 +115,11 @@ class WebCrawler:
     """
     print(f"🧹 Filtering HTML content for: {url}")
     
+    # Check if this is a United Spinal site that needs special handling
+    if self._is_united_spinal_site(url):
+        print(f"🏥 Detected United Spinal site - using specialized content extraction")
+        return self._extract_united_spinal_content(soup, url)
+    
     # Strategy 1: Remove unwanted elements by tag and class/id patterns
     unwanted_selectors = [
         # Navigation elements
@@ -156,7 +161,7 @@ class WebCrawler:
     print(f"🗑️  Removed {removed_count} unwanted HTML elements")
     
     # Strategy 2: Try to identify main content area
-    main_content = self._find_main_content_area(soup)
+    main_content = self._find_main_content_area(soup, url)
     
     if main_content:
         print(f"✅ Found main content area")
@@ -176,7 +181,56 @@ class WebCrawler:
     print(f"📏 Final HTML content length: {len(content_text)} characters")
     return content_text
 
-  def _find_main_content_area(self, soup):
+  def _is_united_spinal_site(self, url: str) -> bool:
+    """Check if the URL is from a United Spinal site that needs special handling."""
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    return 'unitedspinal.org' in domain
+
+  def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
+    """Extract content specifically from United Spinal sites."""
+    print(f"🏥 Extracting United Spinal content from: {url}")
+    
+    # First, remove any <div class="helpful"> elements
+    helpful_elements = soup.select('div.helpful')
+    if helpful_elements:
+        print(f"🗑️  Removing {len(helpful_elements)} 'helpful' div elements")
+        for element in helpful_elements:
+            element.decompose()
+    
+    # Look for the specific content div
+    content_element = soup.select_one('div#content2col')
+    
+    if content_element:
+        print(f"🎯 Found United Spinal content in #content2col")
+        content_text = content_element.get_text(separator=' ', strip=True)
+        print(f"📏 United Spinal content length: {len(content_text)} characters")
+        
+        # Clean the extracted text
+        content_text = self._clean_extracted_text(content_text)
+        return content_text
+    else:
+        print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
+        # Fall back to standard content extraction
+        return self._extract_standard_content(soup, url)
+
+  def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
+    """Standard content extraction logic (original behavior)."""
+    main_content = self._find_main_content_area(soup, url)
+    
+    if main_content:
+        content_text = main_content.get_text(separator=' ', strip=True)
+    else:
+        # Fallback: use body
+        body = soup.find('body')
+        if body:
+            content_text = body.get_text(separator=' ', strip=True)
+        else:
+            content_text = soup.get_text(separator=' ', strip=True)
+    
+    return self._clean_extracted_text(content_text)
+
+  def _find_main_content_area(self, soup, url: str = None):
     """
     Try to identify the main content area using common patterns.
     """
