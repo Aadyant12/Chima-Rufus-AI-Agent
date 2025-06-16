@@ -7,12 +7,12 @@ import hashlib
 import io
 
 # PDF parsing imports
-try:
-    import PyPDF2
-    PDF_PARSING_AVAILABLE = True
-except ImportError:
-    PDF_PARSING_AVAILABLE = False
-    print("⚠️  PyPDF2 not found. Install with: pip install PyPDF2")
+# try:
+import PyPDF2
+PDF_PARSING_AVAILABLE = True
+# except ImportError:
+#     PDF_PARSING_AVAILABLE = False
+#     print("⚠️  PyPDF2 not found. Install with: pip install PyPDF2")
 
 class WebCrawler:
   def __init__(self, allowed_domains: Set[str] = None, parse_pdfs: bool = False):
