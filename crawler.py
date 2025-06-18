@@ -5,6 +5,7 @@ from typing import Set, Dict, List
 import time
 import hashlib
 import io
+import re
 
 # PDF parsing imports
 # try:
@@ -302,8 +303,6 @@ class WebCrawler:
     """
     Clean and normalize the extracted text content (works for both HTML and PDF).
     """
-    import re
-    
     # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
     
@@ -337,8 +336,6 @@ class WebCrawler:
     """
     Clean and filter PDF text content to remove headers, footers, page numbers, etc.
     """
-    import re
-    
     print(f"🧹 Filtering PDF content for: {url}")
     
     # Split into lines for processing
@@ -414,8 +411,6 @@ class WebCrawler:
     """
     Remove content that appears to be repeated headers/footers in PDFs.
     """
-    import re
-    
     # Split into sentences for analysis
     sentences = re.split(r'[.!?]+', text)
     sentence_counts = {}
@@ -992,8 +987,6 @@ class WebCrawler:
     Returns:
         List of dictionaries containing URL information
     """
-    import re
-    
     print(f"🔗 Extracting URLs from text content of: {source_url}")
     
     # Regex patterns to match URLs in text
@@ -1002,8 +995,8 @@ class WebCrawler:
         r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
         # URLs without protocol (www.example.com)
         r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
-        # Domain-only patterns (example.com, example.org, etc.)
-        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}\b(?:[/][^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
+        # Domain-only patterns - more restrictive
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,6}\b(?:/[^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
     ]
     
     found_urls = set()  # Use set to avoid duplicates
@@ -1015,7 +1008,7 @@ class WebCrawler:
             url = match.strip()
             
             # Skip if it's just a file extension or common non-URL patterns
-            if (url.lower().endswith(('.jpg', '.png', '.gif', '.pdf', '.doc', '.docx')) and '/' not in url) or \
+            if (not self._is_likely_url(url)) or \
                len(url) < 4 or \
                url.count('.') > 10:  # Likely not a real URL if too many dots
                 continue
@@ -1073,6 +1066,18 @@ class WebCrawler:
         print(f"   📊 {internal_count} internal, {external_count} external URLs")
     
     return content_links
+
+  def _is_likely_url(self, text: str) -> bool:
+    """Check if text is likely a real URL vs a false positive."""
+    # Skip version numbers, decimals, etc.
+    if re.match(r'^\d+\.\d+', text):  # Version numbers like "1.0"
+        return False
+    if re.match(r'^\w+\.\w+$', text) and len(text) < 8:  # Very short, likely not URL
+        return False
+    # Skip common file extensions without paths
+    if re.match(r'^\w+\.(jpg|png|gif|pdf|doc|docx|txt|csv)$', text, re.IGNORECASE):
+        return False
+    return True
 
   def _crawl_links_from_pdf(self, content_links: List[Dict], source_url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     """Extract and crawl links found in PDF text content."""
