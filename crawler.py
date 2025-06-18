@@ -423,9 +423,12 @@ class WebCrawler:
     print(f"🔍 DEBUG: Starting URL extraction from raw text")
     
     url_patterns = [
-        r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
-        r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
-        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,6}\b(?:/[^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
+        # HTTP/HTTPS URLs - captures everything until whitespace or quotes
+        r'https?://\S+',
+        # www URLs - captures everything until whitespace
+        r'www\.\S+\.\w+\S*',
+        # Domain-only patterns with optional paths
+        r'\b[a-zA-Z0-9][\w\-]*\.[a-zA-Z]{2,6}(?:/\S*)?'
     ]
     
     found_urls = set()
@@ -436,15 +439,15 @@ class WebCrawler:
         print(f"🔍 DEBUG: Pattern {i+1} found {len(matches)} matches: {matches}")
         
         for match in matches:
-            url = match.strip()
+            url = match.strip('.,;:!?)')  # Clean trailing punctuation
             print(f"🔍 DEBUG: Processing match: '{url}'")
             
-            # Simple validation - don't use _is_likely_url yet
-            if len(url) >= 4 and url.count('.') <= 10:
+            # Simple validation
+            if len(url) >= 4 and url.count('.') <= 10 and not url.endswith('.'):
                 found_urls.add(url)
                 print(f"🔍 DEBUG: Added URL: '{url}'")
             else:
-                print(f"🔍 DEBUG: Rejected URL: '{url}' (too short or too many dots)")
+                print(f"🔍 DEBUG: Rejected URL: '{url}' (validation failed)")
     
     final_urls = list(found_urls)
     print(f"🔍 DEBUG: Final raw URLs found: {final_urls}")
@@ -680,14 +683,14 @@ class WebCrawler:
     """
     print(f"🔗 Extracting URLs from text content of: {source_url}")
     
-    # Regex patterns to match URLs in text
+    # Updated regex patterns to match URLs in text - FIXED TO HANDLE QUERY PARAMETERS
     url_patterns = [
-        # Standard HTTP/HTTPS URLs
-        r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
-        # URLs without protocol (www.example.com)
-        r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
-        # Domain-only patterns - more restrictive
-        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,6}\b(?:/[^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
+        # HTTP/HTTPS URLs - captures everything until whitespace or quotes
+        r'https?://\S+',
+        # www URLs - captures everything until whitespace
+        r'www\.\S+\.\w+\S*',
+        # Domain-only patterns with optional paths
+        r'\b[a-zA-Z0-9][\w\-]*\.[a-zA-Z]{2,6}(?:/\S*)?'
     ]
     
     found_urls = set()  # Use set to avoid duplicates
@@ -695,8 +698,8 @@ class WebCrawler:
     for pattern in url_patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
-            # Clean up the URL
-            url = match.strip()
+            # Clean up the URL - clean trailing punctuation
+            url = match.strip('.,;:!?)')
             
             # Skip if it's just a file extension or common non-URL patterns
             if (not self._is_likely_url(url)) or \
