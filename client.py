@@ -39,7 +39,7 @@ class RufusClient:
     max_depth: Maximum depth for recursive crawling (overrides instance value if provided)
     strict_domain: If True, only crawl within the exact subdomain of the starting URL (overrides instance value if provided)
     
-    Returns: List of all scraped pages with their content
+    Returns: List of all scraped pages with their content and links
     """
     try:
       # Use instance values if method parameters are not provided
@@ -87,6 +87,19 @@ class RufusClient:
       # Calculate total content length
       total_content_length = sum(len(page.get('text', '')) for page in pages)
       print(f"📏 Total content length: {total_content_length:,} characters")
+      
+      # Calculate total content links
+      total_content_links = sum(len(page.get('content_links', [])) for page in pages)
+      if total_content_links > 0:
+        print(f"🔗 Total content links extracted: {total_content_links}")
+        # Count internal vs external links
+        all_links = []
+        for page in pages:
+          all_links.extend(page.get('content_links', []))
+        internal_links = sum(1 for link in all_links if link.get('type', '').startswith('internal'))
+        external_links = len(all_links) - internal_links
+        print(f"   📊 {internal_links} internal, {external_links} external links")
+      
       print(f"{'='*60}")
       
       return pages

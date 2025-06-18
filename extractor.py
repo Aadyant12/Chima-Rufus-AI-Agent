@@ -38,6 +38,14 @@ class ContentExtractor:
         print(f"\n📄 Processing page {page_num}/{len(pages)}: {page['title']}")
         print(f"🔗 URL: {page['url']}")
         
+        # Display content links summary
+        content_links = page.get('content_links', [])
+        if content_links:
+            print(f"🔗 This page contains {len(content_links)} content links")
+            internal_links = [link for link in content_links if link['type'].startswith('internal')]
+            external_links = [link for link in content_links if link['type'].startswith('external')]
+            print(f"   📊 {len(internal_links)} internal, {len(external_links)} external links")
+        
         # Display navigation path
         if 'navigation_path' in page and page['navigation_path']:
             print(f"🗺️ Navigation path to this page:")
@@ -98,12 +106,18 @@ class ContentExtractor:
             print(f"📝 Content Preview: {chunk[:200]}{'...' if len(chunk) > 200 else ''}")
             print(f"📏 Full content length: {len(page['text'])} characters")
             print(f"🔢 Content type: {page.get('content_type', 'html')}")
+            
+            # Display content links if available
+            if content_links:
+                print(f"🔗 Content links available: {len(content_links)} links")
+            
             print(f"{'='*60}")
             
             extracted_content.append({
               'url': page['url'],
               'content': chunk,  # Individual relevant chunk
               'full_content': page['text'],  # Add full cleaned content from the page/PDF
+              'content_links': content_links,  # Add extracted content links
               'title': page['title'],
               'depth': page['depth'],
               'relevance_score': float(similarities[i]),

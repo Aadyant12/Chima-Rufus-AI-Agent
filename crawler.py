@@ -544,12 +544,16 @@ class WebCrawler:
       # Extract main content with filtering
       clean_text = self._extract_main_content(soup, url)
       
+      # Extract links from main content area
+      content_links = self._extract_content_links(soup, url)
+      
       # Create page data (keep original URL for display purposes)
       page_data = {
         'url': url,  # Keep original URL
         'title': page_title,
         'html': response.text,
         'text': clean_text,
+        'content_links': content_links,  # Add extracted links
         'depth': current_depth,
         'content_type': 'html',
         'navigation_path': path.copy()
@@ -599,12 +603,13 @@ class WebCrawler:
       print(f"✅ Successfully extracted text from PDF: {pdf_title}")
       print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
       
-      # Create page data for PDF
+      # Create page data for PDF (PDFs don't have links to extract)
       page_data = {
         'url': url,
         'title': pdf_title,
         'html': '',  # PDFs don't have HTML
         'text': clean_pdf_text,
+        'content_links': [],  # PDFs don't have extractable links
         'depth': current_depth,
         'content_type': 'pdf',
         'navigation_path': path.copy()
@@ -779,3 +784,119 @@ class WebCrawler:
       """
       self.page_cache.clear()
       print("🗑️  WebCrawler cache cleared")
+
+  def _extract_content_links(self, soup: BeautifulSoup, url: str) -> List[Dict]:
+    """
+    Extract all links from the main content area of the page.
+    
+    Args:
+        soup: BeautifulSoup object of the page
+        url: Current page URL for resolving relative links
+        
+    Returns:
+        List of dictionaries containing link information
+    """
+    print(f"🔗 Extracting links from main content area: {url}")
+    
+    # Find the main content area using the same logic as _extract_main_content
+    main_content_element = None
+    
+    # Check if this is a United Spinal site that needs special handling
+    if self._is_united_spinal_site(url):
+        # Look for the specific content div
+        main_content_element = soup.select_one('div#content2col')
+    
+    if not main_content_element:
+        # Use the same main content finding logic
+        main_content_element = self._find_main_content_area(soup, url)
+    
+    if not main_content_element:
+        # Fallback to body
+        main_content_element = soup.find('body')
+    
+    if not main_content_element:
+        # Last resort - use the entire soup
+        main_content_element = soup
+    
+    # Extract all links from the main content area
+    content_links = []
+    links_found = main_content_element.find_all('a', href=True)
+    
+    print(f"📊 Found {len(links_found)} links in main content area")
+    
+    for link in links_found:
+        try:
+            href = link.get('href', '').strip()
+            if not href:
+                continue
+                
+            # Resolve relative URLs
+            absolute_url = urljoin(url, href)
+            
+            # Get link text
+            link_text = link.get_text(strip=True)
+            
+            # Get any title attribute
+            link_title = link.get('title', '').strip()
+            
+            # Parse the URL to get domain info
+            parsed_link = urlparse(absolute_url)
+            
+            # Check if it's an internal or external link
+            link_domain = parsed_link.netloc.lower()
+            is_internal = self._is_internal_domain(link_domain)
+            
+            # Determine link type
+            link_type = 'internal' if is_internal else 'external'
+            
+            # Check if it's a PDF
+            if self._is_pdf_url(absolute_url):
+                link_type += '_pdf'
+            
+            # Skip certain types of links (like javascript, mailto, etc.)
+            if parsed_link.scheme in ['javascript', 'mailto', 'tel', 'ftp']:
+                continue
+                
+            # Skip fragment-only links (anchors within the same page)
+            if absolute_url.startswith('#') or (parsed_link.netloc == urlparse(url).netloc and 
+                                              parsed_link.path == urlparse(url).path and 
+                                              parsed_link.fragment and not parsed_link.query):
+                continue
+            
+            link_info = {
+                'url': absolute_url,
+                'text': link_text,
+                'title': link_title,
+                'type': link_type,
+                'domain': link_domain
+            }
+            
+            content_links.append(link_info)
+            
+        except Exception as e:
+            print(f"⚠️  Error processing link {href}: {str(e)}")
+            continue
+    
+    # Remove duplicates based on URL
+    unique_links = {}
+    for link in content_links:
+        url_key = link['url']
+        if url_key not in unique_links:
+            unique_links[url_key] = link
+        else:
+            # If we have a duplicate, keep the one with more text
+            if len(link['text']) > len(unique_links[url_key]['text']):
+                unique_links[url_key] = link
+    
+    final_links = list(unique_links.values())
+    
+    # Sort links by type (internal first) and then by text
+    final_links.sort(key=lambda x: (x['type'] != 'internal', x['text'].lower()))
+    
+    print(f"✅ Extracted {len(final_links)} unique content links")
+    if final_links:
+        internal_count = sum(1 for link in final_links if link['type'].startswith('internal'))
+        external_count = len(final_links) - internal_count
+        print(f"   📊 {internal_count} internal, {external_count} external links")
+    
+    return final_links
