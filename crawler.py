@@ -6,6 +6,7 @@ import time
 import hashlib
 import io
 import re
+import copy
 
 # PDF parsing imports
 # try:
@@ -1074,8 +1075,8 @@ class WebCrawler:
         'navigation_path': path.copy()
       }
       
-      # Cache the page (without depth and path since they can vary)
-      cache_data = page_data.copy()
+      # Cache the page (without depth and path since they can vary) - USE DEEP COPY
+      cache_data = copy.deepcopy(page_data)  # Use deepcopy instead of copy()
       cache_data['html'] = response.text  # Store HTML only in cache for link crawling
       del cache_data['depth']
       del cache_data['navigation_path']
