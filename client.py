@@ -72,7 +72,10 @@ class RufusClient:
       pages = self.crawler.crawl(url, max_depth=max_depth, strict_domain=strict_domain)
       print(f"✅ Crawling completed! Found {len(pages)} pages")
       
-      # REMOVE HTML FROM ALL RESULTS - Ensure HTML is never returned
+      # REMOVE HTML FROM ALL RESULTS - Ensure HTML is never returned (CRITICAL FIX)
+      pages = self._remove_html_from_results(pages)
+      
+      # Double-check: Remove HTML again to be absolutely sure
       pages = self._remove_html_from_results(pages)
       
       # Cache the crawl results (store cleaned results)
@@ -131,11 +134,23 @@ class RufusClient:
 
   def _remove_html_from_results(self, pages: List[Dict]) -> List[Dict]:
     """Remove HTML from all pages in results to prevent it from being returned."""
+    if not pages:
+        return []
+    
     cleaned_pages = []
     for page in pages:
-      # Create a copy of the page without HTML
-      cleaned_page = {k: v for k, v in page.items() if k != 'html'}
-      cleaned_pages.append(cleaned_page)
+        if not isinstance(page, dict):
+            continue
+        
+        # Create a copy of the page without HTML - be explicit about what we remove
+        cleaned_page = {}
+        for key, value in page.items():
+            if key != 'html':  # Explicitly exclude 'html' key
+                cleaned_page[key] = value
+        
+        cleaned_pages.append(cleaned_page)
+    
+    print(f"🗑️  Ensured HTML is removed from {len(cleaned_pages)} pages")
     return cleaned_pages
 
   def _normalize_url(self, url: str) -> str:
