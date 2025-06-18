@@ -613,19 +613,22 @@ class WebCrawler:
       # Clean and filter PDF text
       clean_pdf_text = self._clean_pdf_text(pdf_text, url)
       
+      # Extract URLs from PDF text content
+      content_links = self._extract_urls_from_text(clean_pdf_text, url)
+      
       # Get PDF title from URL or content
       pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
       
       print(f"✅ Successfully extracted text from PDF: {pdf_title}")
       print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
       
-      # Create page data for PDF (PDFs don't have links to extract)
+      # Create page data for PDF
       page_data = {
         'url': url,
         'title': pdf_title,
         'html': '',  # PDFs don't have HTML
         'text': clean_pdf_text,
-        'content_links': [],  # PDFs don't have extractable links
+        'content_links': content_links,  # Now includes URLs found in PDF text
         'depth': current_depth,
         'content_type': 'pdf',
         'navigation_path': path.copy()
@@ -640,6 +643,12 @@ class WebCrawler:
       
       # Store PDF data
       results.append(page_data)
+      
+      # Crawl URLs found in PDF content if not at max depth
+      if current_depth < max_depth and content_links:
+        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
+        current_page_info = {'url': url, 'title': pdf_title}
+        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
       
     except Exception as e:
       print(f"❌ Error processing PDF {url}: {str(e)}")
@@ -659,19 +668,22 @@ class WebCrawler:
       # Clean and filter PDF text
       clean_pdf_text = self._clean_pdf_text(pdf_text, url)
       
+      # Extract URLs from PDF text content
+      content_links = self._extract_urls_from_text(clean_pdf_text, url)
+      
       # Get PDF title from URL or content
       pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
       
       print(f"✅ Successfully extracted text from PDF: {pdf_title}")
       print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
       
-      # Create page data for PDF (PDFs don't have links to extract)
+      # Create page data for PDF
       page_data = {
         'url': url,
         'title': pdf_title,
         'html': '',  # PDFs don't have HTML
         'text': clean_pdf_text,
-        'content_links': [],  # PDFs don't have extractable links
+        'content_links': content_links,  # Now includes URLs found in PDF text
         'depth': current_depth,
         'content_type': 'pdf',
         'navigation_path': path.copy()
@@ -686,6 +698,12 @@ class WebCrawler:
       
       # Store PDF data
       results.append(page_data)
+      
+      # Crawl URLs found in PDF content if not at max depth
+      if current_depth < max_depth and content_links:
+        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
+        current_page_info = {'url': url, 'title': pdf_title}
+        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
       
     except Exception as e:
       print(f"❌ Error processing PDF from response {url}: {str(e)}")
@@ -962,3 +980,139 @@ class WebCrawler:
         print(f"   📊 {internal_count} internal, {external_count} external links")
     
     return final_links
+
+  def _extract_urls_from_text(self, text: str, source_url: str) -> List[Dict]:
+    """
+    Extract URLs from plain text content (useful for PDFs and other text sources).
+    
+    Args:
+        text: Plain text content to search for URLs
+        source_url: URL of the source document (for resolving relative URLs if any)
+        
+    Returns:
+        List of dictionaries containing URL information
+    """
+    import re
+    
+    print(f"🔗 Extracting URLs from text content of: {source_url}")
+    
+    # Regex patterns to match URLs in text
+    url_patterns = [
+        # Standard HTTP/HTTPS URLs
+        r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
+        # URLs without protocol (www.example.com)
+        r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
+        # Domain-only patterns (example.com, example.org, etc.)
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}\b(?:[/][^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
+    ]
+    
+    found_urls = set()  # Use set to avoid duplicates
+    
+    for pattern in url_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            # Clean up the URL
+            url = match.strip()
+            
+            # Skip if it's just a file extension or common non-URL patterns
+            if (url.lower().endswith(('.jpg', '.png', '.gif', '.pdf', '.doc', '.docx')) and '/' not in url) or \
+               len(url) < 4 or \
+               url.count('.') > 10:  # Likely not a real URL if too many dots
+                continue
+            
+            # Add protocol if missing
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            
+            # Validate the URL format
+            try:
+                parsed = urlparse(url)
+                if parsed.netloc and parsed.scheme in ('http', 'https'):
+                    found_urls.add(url)
+            except:
+                continue
+    
+    # Convert to list and create link info dictionaries
+    content_links = []
+    for url in found_urls:
+        try:
+            parsed_link = urlparse(url)
+            link_domain = parsed_link.netloc.lower()
+            
+            # Check if it's an internal or external link
+            is_internal = self._is_internal_domain(link_domain)
+            
+            # Determine link type
+            link_type = 'internal' if is_internal else 'external'
+            
+            # Check if it's a PDF
+            if self._is_pdf_url(url):
+                link_type += '_pdf'
+            
+            link_info = {
+                'url': url,
+                'text': url,  # For text-extracted URLs, the text is the URL itself
+                'title': '',  # No title available from plain text
+                'type': link_type,
+                'domain': link_domain
+            }
+            
+            content_links.append(link_info)
+            
+        except Exception as e:
+            print(f"⚠️  Error processing extracted URL {url}: {str(e)}")
+            continue
+    
+    # Sort links by type (internal first) and then by URL
+    content_links.sort(key=lambda x: (x['type'] != 'internal', x['url'].lower()))
+    
+    print(f"✅ Extracted {len(content_links)} URLs from text content")
+    if content_links:
+        internal_count = sum(1 for link in content_links if link['type'].startswith('internal'))
+        external_count = len(content_links) - internal_count
+        print(f"   📊 {internal_count} internal, {external_count} external URLs")
+    
+    return content_links
+
+  def _crawl_links_from_pdf(self, content_links: List[Dict], source_url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
+    """Extract and crawl links found in PDF text content."""
+    print(f"🔗 Processing {len(content_links)} URLs found in PDF: {source_url}")
+    
+    # Check if current PDF is from external domain
+    parsed_current = urlparse(source_url)
+    current_domain = parsed_current.netloc.lower()
+    is_current_internal = self._is_internal_domain(current_domain)
+    
+    if not is_current_internal:
+        print(f"🚫 PDF is from external domain {current_domain} - will not crawl any URLs from this PDF")
+        return
+    
+    # Find all links
+    links_found = 0
+    external_links_found = 0
+    
+    for link_info in content_links:
+        next_url = link_info['url']
+        
+        # Check if this link is external
+        parsed_next = urlparse(next_url)
+        next_domain = parsed_next.netloc.lower()
+        is_next_internal = self._is_internal_domain(next_domain)
+        
+        # Recursively crawl each valid link
+        if self._should_crawl(next_url, source_url):  # Pass source PDF URL for context
+            links_found += 1
+            if not is_next_internal:
+                external_links_found += 1
+                print(f"🌍 Following external link from PDF: {next_url}")
+            
+            self._crawl_recursive(
+                next_url, 
+                current_depth + 1, 
+                max_depth, 
+                results,
+                path,  # Pass the current path
+                source_url    # Pass PDF URL as parent_url
+            )
+    
+    print(f"📊 Crawled {links_found} valid URLs from PDF {source_url} ({external_links_found} external)")
