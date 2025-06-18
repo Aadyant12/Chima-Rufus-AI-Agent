@@ -1206,3 +1206,12 @@ class WebCrawler:
       
     except Exception as e:
       print(f"❌ Error processing PDF from response {url}: {str(e)}")
+
+  def _remove_html_from_results(self, pages: List[Dict]) -> List[Dict]:
+    """Remove HTML from all pages in results to prevent it from being returned."""
+    cleaned_pages = []
+    for page in pages:
+      # Create a copy of the page without HTML
+      cleaned_page = {k: v for k, v in page.items() if k != 'html'}
+      cleaned_pages.append(cleaned_page)
+    return cleaned_pages

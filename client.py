@@ -60,6 +60,8 @@ class RufusClient:
       if crawl_cache_key in self.crawl_cache:
         print(f"💾 CACHE HIT! Using cached crawl results")
         pages = self.crawl_cache[crawl_cache_key]
+        # Ensure HTML is removed from cached results too
+        pages = self._remove_html_from_results(pages)
         print(f"✅ Retrieved {len(pages)} cached pages")
         print(f"🌐 From {len(set(page['url'] for page in pages))} unique sources")
         print(f"{'='*60}")
@@ -70,7 +72,10 @@ class RufusClient:
       pages = self.crawler.crawl(url, max_depth=max_depth, strict_domain=strict_domain)
       print(f"✅ Crawling completed! Found {len(pages)} pages")
       
-      # Cache the crawl results
+      # REMOVE HTML FROM ALL RESULTS - Ensure HTML is never returned
+      pages = self._remove_html_from_results(pages)
+      
+      # Cache the crawl results (store cleaned results)
       self.crawl_cache[crawl_cache_key] = pages
       print(f"💾 Cached {len(pages)} pages for future use")
       
@@ -123,6 +128,15 @@ class RufusClient:
     self.crawl_cache.clear()
     self.crawler.clear_cache()  # Also clear crawler's page cache
     print("🗑️  All caches cleared successfully")
+
+  def _remove_html_from_results(self, pages: List[Dict]) -> List[Dict]:
+    """Remove HTML from all pages in results to prevent it from being returned."""
+    cleaned_pages = []
+    for page in pages:
+      # Create a copy of the page without HTML
+      cleaned_page = {k: v for k, v in page.items() if k != 'html'}
+      cleaned_pages.append(cleaned_page)
+    return cleaned_pages
 
   def _normalize_url(self, url: str) -> str:
     """
