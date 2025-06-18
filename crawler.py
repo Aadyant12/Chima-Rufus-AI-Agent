@@ -511,7 +511,7 @@ class WebCrawler:
         self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
         
         # Continue crawling links from cached page if not at max depth and not a PDF
-        if current_depth < max_depth and not self._is_pdf_url(url):
+        if current_depth < max_depth and cached_page.get('content_type', 'html') != 'pdf':
           soup = BeautifulSoup(cached_page['html'], 'html.parser')
           current_page_info = {'url': url, 'title': cached_page['title']}
           self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
@@ -523,19 +523,35 @@ class WebCrawler:
       time.sleep(self.delay)
       self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
       
-      # Handle PDF files differently
+      # Handle PDF files detected by URL extension
       if self._is_pdf_url(url):
-        print(f"🔍 PDF DETECTED: {url}")
+        print(f"🔍 PDF DETECTED BY URL: {url}")
         print(f"📄 Starting PDF scraping process...")
         self._process_pdf(url, current_depth, results, path)
         return
       
-      # Make request for HTML content
+      # Make request to check content type
       response = self.session.get(url, timeout=15)
       if response.status_code != 200:
         print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
         return
       
+      # Check if this is actually a PDF based on content type or content
+      content_type = response.headers.get('content-type', '').lower()
+      is_pdf_content = (content_type.startswith('application/pdf') or 
+                       (response.content and response.content.startswith(b'%PDF-')))
+      
+      if is_pdf_content and self.parse_pdfs:
+        print(f"🔍 PDF DETECTED BY CONTENT: {url}")
+        print(f"📄 Content-Type: {content_type}")
+        print(f"📄 Starting PDF scraping process...")
+        self._process_pdf_from_response(url, response, current_depth, results, path)
+        return
+      elif is_pdf_content and not self.parse_pdfs:
+        print(f"📄 PDF detected but parsing disabled: {url}")
+        return
+      
+      # Process as HTML
       soup = BeautifulSoup(response.text, 'html.parser')
       page_title = soup.title.string if soup.title else 'No Title'
       
@@ -627,6 +643,52 @@ class WebCrawler:
       
     except Exception as e:
       print(f"❌ Error processing PDF {url}: {str(e)}")
+
+  def _process_pdf_from_response(self, url: str, response, current_depth: int, results: List[Dict], path: List[Dict]):
+    """Process a PDF file from an already downloaded response."""
+    try:
+      print(f"📄 Processing PDF from response [Depth {current_depth}]: {url}")
+      
+      # Extract text from PDF
+      pdf_text = self._extract_pdf_text(response.content)
+      
+      if not pdf_text:
+        print(f"⚠️  No text extracted from PDF: {url}")
+        return
+      
+      # Clean and filter PDF text
+      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
+      
+      # Get PDF title from URL or content
+      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
+      
+      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
+      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
+      
+      # Create page data for PDF (PDFs don't have links to extract)
+      page_data = {
+        'url': url,
+        'title': pdf_title,
+        'html': '',  # PDFs don't have HTML
+        'text': clean_pdf_text,
+        'content_links': [],  # PDFs don't have extractable links
+        'depth': current_depth,
+        'content_type': 'pdf',
+        'navigation_path': path.copy()
+      }
+      
+      # Cache the PDF data
+      cache_key = self._get_page_cache_key(url)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      del cache_data['navigation_path']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store PDF data
+      results.append(page_data)
+      
+    except Exception as e:
+      print(f"❌ Error processing PDF from response {url}: {str(e)}")
 
   def _should_crawl(self, url: str, current_url: str = None) -> bool:
     """
