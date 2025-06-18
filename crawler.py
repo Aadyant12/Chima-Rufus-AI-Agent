@@ -338,6 +338,9 @@ class WebCrawler:
     """
     print(f"🧹 Filtering PDF content for: {url}")
     
+    # FIRST: Extract URLs from the raw PDF text before cleaning removes them
+    raw_urls = self._extract_urls_from_raw_text(pdf_text)
+    
     # Split into lines for processing
     lines = pdf_text.split('\n')
     cleaned_lines = []
@@ -353,10 +356,7 @@ class WebCrawler:
         # Headers/footers that repeat
         r'^\s*(?:confidential|proprietary|draft|internal)\s*$',
         
-        # URLs at top/bottom of pages
-        r'^(?:https?://|www\.)',
-        
-        # Email addresses in headers/footers
+        # Email addresses in headers/footers (only if they're standalone)
         r'^\s*[\w\.-]+@[\w\.-]+\.\w+\s*$',
         
         # Copyright notices
@@ -404,7 +404,43 @@ class WebCrawler:
     # Remove repeated headers/footers (text that appears multiple times)
     cleaned_text = self._remove_repeated_content(cleaned_text)
     
+    # Re-inject URLs that were found in raw text if they're not already present
+    cleaned_text = self._preserve_urls_in_cleaned_text(cleaned_text, raw_urls)
+    
     print(f"📏 Final PDF content length: {len(cleaned_text)} characters")
+    return cleaned_text
+
+  def _extract_urls_from_raw_text(self, text: str) -> List[str]:
+    """Extract URLs from raw text before cleaning."""
+    url_patterns = [
+        r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
+        r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,6}\b(?:/[^\s<>"\']*[^\s<>"\'\.,;:!?\)])?'
+    ]
+    
+    found_urls = set()
+    for pattern in url_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            url = match.strip()
+            if self._is_likely_url(url):
+                found_urls.add(url)
+    
+    return list(found_urls)
+
+  def _preserve_urls_in_cleaned_text(self, cleaned_text: str, raw_urls: List[str]) -> str:
+    """Re-inject URLs that may have been removed during cleaning."""
+    missing_urls = []
+    for url in raw_urls:
+        # Check if URL is missing from cleaned text
+        if url not in cleaned_text:
+            missing_urls.append(url)
+    
+    if missing_urls:
+        print(f"🔗 Re-injecting {len(missing_urls)} URLs that were removed during cleaning")
+        # Add missing URLs at the end
+        cleaned_text += " " + " ".join(missing_urls)
+    
     return cleaned_text
 
   def _remove_repeated_content(self, text: str) -> str:
