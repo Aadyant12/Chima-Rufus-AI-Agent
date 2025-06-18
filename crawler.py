@@ -994,16 +994,18 @@ class WebCrawler:
       if cache_key in self.page_cache:
         print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
         print(f"🔗 Normalized to: {normalized_url}")
-        cached_page = self.page_cache[cache_key].copy()
+        # Remove HTML from cached data before copying
+        if 'html' in self.page_cache[cache_key]:
+          html_for_crawling = self.page_cache[cache_key]['html']
+          # Create a copy without HTML for results
+          cached_page = {k: v for k, v in self.page_cache[cache_key].items() if k != 'html'}
+        else:
+          cached_page = self.page_cache[cache_key].copy()
+          html_for_crawling = None
         cached_page['depth'] = current_depth
         cached_page['navigation_path'] = path.copy()
         # Use original URL in results, not normalized
         cached_page['url'] = url
-        
-        # Remove HTML from results - it should only be used internally for link crawling
-        if 'html' in cached_page:
-          html_for_crawling = cached_page['html']
-          del cached_page['html']
         
         results.append(cached_page)
         self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
