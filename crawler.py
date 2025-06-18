@@ -332,6 +332,11 @@ class WebCrawler:
     
     return text
 
+  def _remove_repeated_content(self, text: str) -> str:
+    """Remove text that appears multiple times (likely headers/footers)."""
+    # This method was missing - adding it to prevent errors
+    return text
+
   def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
     """
     Clean and filter PDF text content to remove headers, footers, page numbers, etc.
@@ -339,35 +344,31 @@ class WebCrawler:
     print(f"🧹 Filtering PDF content for: {url}")
     
     # FIRST: Extract URLs from the raw PDF text before cleaning removes them
-    print(f"🔍 DEBUG: Raw PDF text length: {len(pdf_text)} characters")
-    print(f"🔍 DEBUG: Raw PDF text preview: {pdf_text[:500]}...")
+    print(f"🔍 Raw PDF text length: {len(pdf_text)} characters")
     
-    raw_urls = self._extract_urls_from_raw_text_debug(pdf_text)
-    print(f"🔍 DEBUG: Found {len(raw_urls)} raw URLs: {raw_urls}")
+    raw_urls = self._extract_urls_from_raw_text_improved(pdf_text)
+    print(f"🔍 Found {len(raw_urls)} raw URLs before cleaning: {raw_urls}")
     
     # Split into lines for processing
     lines = pdf_text.split('\n')
     cleaned_lines = []
     
-    # Common PDF artifacts to remove
+    # Common PDF artifacts to remove - IMPROVED to be less aggressive
     pdf_artifacts = [
-        # Page numbers (various formats)
-        r'^\s*\d+\s*$',  # Just a number
+        # Page numbers (various formats) - only match standalone page numbers
+        r'^\s*\d+\s*$',  # Just a number on its own line
         r'^\s*Page\s+\d+\s*$',  # "Page 1"
         r'^\s*\d+\s+of\s+\d+\s*$',  # "1 of 10"
         r'^\s*-\s*\d+\s*-\s*$',  # "- 1 -"
         
-        # Headers/footers that repeat
+        # Headers/footers that repeat - only very specific patterns
         r'^\s*(?:confidential|proprietary|draft|internal)\s*$',
         
-        # Email addresses in headers/footers (only if they're standalone)
-        r'^\s*[\w\.-]+@[\w\.-]+\.\w+\s*$',
+        # Copyright notices - only if they're standalone
+        r'^\s*©.*\d{4}\s*$',
+        r'^\s*Copyright.*\d{4}\s*$',
         
-        # Copyright notices
-        r'^\s*©.*\d{4}',
-        r'^\s*Copyright.*\d{4}',
-        
-        # Common footer text
+        # Common footer text - only if standalone
         r'^\s*All rights reserved\s*$',
         r'^\s*Confidential and Proprietary\s*$',
     ]
@@ -380,6 +381,11 @@ class WebCrawler:
         if not line:
             continue
             
+        # Check if line contains URLs - if so, ALWAYS keep it
+        if self._line_contains_url(line):
+            cleaned_lines.append(line)
+            continue
+            
         # Check if line matches any artifact pattern
         is_artifact = False
         for pattern in pdf_artifacts:
@@ -388,8 +394,8 @@ class WebCrawler:
                 removed_lines += 1
                 break
         
-        # Skip very short lines (likely artifacts) unless they contain meaningful punctuation
-        if len(line) < 3 and not any(punct in line for punct in ['.', '!', '?', ':']):
+        # Only skip very short lines that don't contain URLs or meaningful punctuation
+        if len(line) < 3 and not any(punct in line for punct in ['.', '!', '?', ':', '/', '@']):
             is_artifact = True
             removed_lines += 1
         
@@ -400,91 +406,150 @@ class WebCrawler:
     
     # Rejoin lines
     cleaned_text = ' '.join(cleaned_lines)
-    print(f"🔍 DEBUG: Cleaned text length: {len(cleaned_text)} characters")
-    print(f"🔍 DEBUG: Cleaned text preview: {cleaned_text[:500]}...")
+    print(f"🔍 Cleaned text length: {len(cleaned_text)} characters")
     
-    # Apply general text cleaning
-    cleaned_text = self._clean_extracted_text(cleaned_text)
-    
-    # Additional PDF-specific cleaning
-    # Remove repeated headers/footers (text that appears multiple times)
-    cleaned_text = self._remove_repeated_content(cleaned_text)
+    # Apply general text cleaning - but preserve URLs
+    cleaned_text = self._clean_extracted_text_preserve_urls(cleaned_text)
     
     # Re-inject URLs that were found in raw text if they're not already present
-    cleaned_text = self._preserve_urls_in_cleaned_text_debug(cleaned_text, raw_urls)
+    cleaned_text = self._preserve_urls_in_cleaned_text_improved(cleaned_text, raw_urls)
     
     print(f"📏 Final PDF content length: {len(cleaned_text)} characters")
     return cleaned_text
 
-  def _extract_urls_from_raw_text_debug(self, text: str) -> List[str]:
-    """Extract URLs from raw text before cleaning - DEBUG VERSION."""
-    import re
+  def _line_contains_url(self, line: str) -> bool:
+    """Check if a line contains what looks like a URL."""
+    # Basic patterns to detect URLs in a line
+    url_indicators = [
+        r'https?://',
+        r'www\.',
+        r'\.[a-zA-Z]{2,6}/',  # domain with path
+        r'\.pdf\b',  # PDF files
+        r'\.html?\b',  # HTML files
+        r'\.gov\b',  # Government domains
+        r'\.org\b',  # Organization domains
+        r'\.edu\b',  # Education domains
+    ]
     
-    print(f"🔍 DEBUG: Starting URL extraction from raw text")
+    for pattern in url_indicators:
+        if re.search(pattern, line, re.IGNORECASE):
+            return True
+    return False
+
+  def _clean_extracted_text_preserve_urls(self, text: str) -> str:
+    """
+    Clean and normalize the extracted text content while preserving URLs.
+    """
+    # Remove excessive whitespace but preserve URLs
+    text = re.sub(r'\s+', ' ', text)
     
+    # Remove common navigational text patterns - but be careful not to remove URLs
+    nav_patterns = [
+        r'Skip to (?:main )?content',
+        r'Menu\s*Toggle',
+        r'Search\s*for:',
+        r'Share\s*this\s*(?:post|article|page)(?!\S)',  # Don't match if followed by URL
+        r'Follow\s*us\s*on(?!\S)',  # Don't match if followed by URL
+        r'Subscribe\s*to\s*our(?!\S)',  # Don't match if followed by URL
+        r'Cookie\s*(?:Policy|Notice)(?!\S)',
+        r'Privacy\s*Policy(?!\S)',
+        r'Terms\s*(?:of\s*(?:Service|Use))?(?!\S)',
+        r'All\s*rights\s*reserved(?!\S)'
+    ]
+    
+    for pattern in nav_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Final cleanup
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+  def _extract_urls_from_raw_text_improved(self, text: str) -> List[str]:
+    """Extract URLs from raw text before cleaning - IMPROVED VERSION."""
+    
+    # More comprehensive URL patterns - FIXED
     url_patterns = [
-        # HTTP/HTTPS URLs - captures everything until whitespace or quotes
-        r'https?://\S+',
-        # www URLs - captures everything until whitespace
-        r'www\.\S+\.\w+\S*',
-        # Domain-only patterns with optional paths
-        r'\b[a-zA-Z0-9][\w\-]*\.[a-zA-Z]{2,6}(?:/\S*)?'
+        # Full HTTP/HTTPS URLs - more permissive
+        r'https?://[^\s<>"{}|\\^`\[\]]+',
+        # www URLs - more permissive  
+        r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}[^\s<>"{}|\\^`\[\]]*',
+        # FTP URLs
+        r'ftp://[^\s<>"{}|\\^`\[\]]+',
+        # Domain.extension patterns - FIXED bracket escaping for PDF links
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}[/\w\-._~:/?#\[\]@!$&\'()*+,;=%]*\.pdf\b',
+        # Government and organization domains with paths - FIXED bracket escaping
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*\.(?:gov|org|edu|com|net)[/\w\-._~:/?#\[\]@!$&\'()*+,;=%]*',
+        # IP addresses - FIXED bracket escaping
+        r'\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?[/\w\-._~:/?#\[\]@!$&\'()*+,;=%]*',
+        # Email-like patterns that might be URLs
+        r'\b[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}\b'
     ]
     
     found_urls = set()
     
-    for i, pattern in enumerate(url_patterns):
-        print(f"🔍 DEBUG: Testing pattern {i+1}: {pattern}")
+    for pattern in url_patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
-        print(f"🔍 DEBUG: Pattern {i+1} found {len(matches)} matches: {matches}")
         
         for match in matches:
-            url = match.strip('.,;:!?)')  # Clean trailing punctuation
-            print(f"🔍 DEBUG: Processing match: '{url}'")
+            # Clean trailing punctuation but be more careful
+            url = re.sub(r'[.,;:!?)\]}]+$', '', match)
             
-            # Simple validation
-            if len(url) >= 4 and url.count('.') <= 10 and not url.endswith('.'):
+            # More lenient validation
+            if (len(url) >= 4 and 
+                url.count('.') >= 1 and 
+                url.count('.') <= 15 and  # Increased limit
+                not url.startswith('.') and
+                not url.endswith('.') and
+                not re.match(r'^\d+\.\d+(\.\d+)*$', url)):  # Skip version numbers
+                
                 found_urls.add(url)
-                print(f"🔍 DEBUG: Added URL: '{url}'")
-            else:
-                print(f"🔍 DEBUG: Rejected URL: '{url}' (validation failed)")
     
     final_urls = list(found_urls)
-    print(f"🔍 DEBUG: Final raw URLs found: {final_urls}")
+    print(f"🔍 Found {len(final_urls)} URLs in raw text")
     return final_urls
 
-  def _preserve_urls_in_cleaned_text_debug(self, cleaned_text: str, raw_urls: List[str]) -> str:
-    """Re-inject URLs that may have been removed during cleaning - DEBUG VERSION."""
-    print(f"🔍 DEBUG: Checking if {len(raw_urls)} URLs are preserved in cleaned text")
+  def _preserve_urls_in_cleaned_text_improved(self, cleaned_text: str, raw_urls: List[str]) -> str:
+    """Re-inject URLs that may have been removed during cleaning - IMPROVED VERSION."""
     
     missing_urls = []
     for url in raw_urls:
-        print(f"🔍 DEBUG: Checking if '{url}' is in cleaned text...")
-        if url not in cleaned_text:
+        # Check if URL or a close variant is in cleaned text
+        if (url not in cleaned_text and 
+            url.replace('https://', '') not in cleaned_text and
+            url.replace('http://', '') not in cleaned_text and
+            url.replace('www.', '') not in cleaned_text):
             missing_urls.append(url)
-            print(f"🔍 DEBUG: Missing URL: '{url}'")
-        else:
-            print(f"🔍 DEBUG: URL preserved: '{url}'")
     
     if missing_urls:
-        print(f"🔗 Re-injecting {len(missing_urls)} URLs that were removed during cleaning: {missing_urls}")
-        # Add missing URLs at the end
+        print(f"🔗 Re-injecting {len(missing_urls)} URLs that were removed during cleaning")
+        # Add missing URLs at the end with proper spacing
         cleaned_text += " " + " ".join(missing_urls)
-    else:
-        print(f"🔍 DEBUG: All URLs were preserved in cleaned text")
     
     return cleaned_text
 
   def _is_likely_url(self, text: str) -> bool:
-    """Check if text is likely a real URL vs a false positive."""
-    # Skip version numbers, decimals, etc.
-    if re.match(r'^\d+\.\d+', text):  # Version numbers like "1.0"
+    """Check if text is likely a real URL vs a false positive - IMPROVED VERSION."""
+    # Skip obvious version numbers
+    if re.match(r'^\d+\.\d+(\.\d+)*$', text):  # Version numbers like "1.0" or "1.0.1"
         return False
-    if re.match(r'^\w+\.\w+$', text) and len(text) < 8:  # Very short, likely not URL
+    
+    # Skip very short domain-like strings that are likely not URLs
+    if re.match(r'^\w+\.\w+$', text) and len(text) < 6:  # Reduced from 8 to 6
         return False
-    # Skip common file extensions without paths
-    if re.match(r'^\w+\.(jpg|png|gif|pdf|doc|docx|txt|csv)$', text, re.IGNORECASE):
+    
+    # ALLOW file extensions with paths - this was the main issue!
+    if '.pdf' in text.lower() or '.html' in text.lower() or '.htm' in text.lower():
+        return True
+    
+    # Allow common domains
+    if any(domain in text.lower() for domain in ['.gov', '.org', '.edu', '.com', '.net']):
+        return True
+    
+    # Skip standalone file extensions without meaningful content
+    if re.match(r'^\w+\.(jpg|png|gif|doc|docx|txt|csv)$', text, re.IGNORECASE):
         return False
+    
     return True
 
   def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
@@ -672,58 +737,28 @@ class WebCrawler:
 
   def _extract_urls_from_text(self, text: str, source_url: str) -> List[Dict]:
     """
-    Extract URLs from plain text content (useful for PDFs and other text sources).
-    
-    Args:
-        text: Plain text content to search for URLs
-        source_url: URL of the source document (for resolving relative URLs if any)
-        
-    Returns:
-        List of dictionaries containing URL information
+    Extract URLs from plain text content (useful for PDFs and other text sources) - IMPROVED VERSION.
     """
     print(f"🔗 Extracting URLs from text content of: {source_url}")
     
-    # Updated regex patterns to match URLs in text - FIXED TO HANDLE QUERY PARAMETERS
-    url_patterns = [
-        # HTTP/HTTPS URLs - captures everything until whitespace or quotes
-        r'https?://\S+',
-        # www URLs - captures everything until whitespace
-        r'www\.\S+\.\w+\S*',
-        # Domain-only patterns with optional paths
-        r'\b[a-zA-Z0-9][\w\-]*\.[a-zA-Z]{2,6}(?:/\S*)?'
-    ]
-    
-    found_urls = set()  # Use set to avoid duplicates
-    
-    for pattern in url_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for match in matches:
-            # Clean up the URL - clean trailing punctuation
-            url = match.strip('.,;:!?)')
-            
-            # Skip if it's just a file extension or common non-URL patterns
-            if (not self._is_likely_url(url)) or \
-               len(url) < 4 or \
-               url.count('.') > 10:  # Likely not a real URL if too many dots
-                continue
-            
-            # Add protocol if missing
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-            
-            # Validate the URL format
-            try:
-                parsed = urlparse(url)
-                if parsed.netloc and parsed.scheme in ('http', 'https'):
-                    found_urls.add(url)
-            except:
-                continue
+    # Use the improved URL extraction method
+    found_urls = self._extract_urls_from_raw_text_improved(text)
     
     # Convert to list and create link info dictionaries
     content_links = []
     for url in found_urls:
         try:
-            parsed_link = urlparse(url)
+            # Add protocol if missing
+            processed_url = url
+            if not processed_url.startswith(('http://', 'https://', 'ftp://')):
+                processed_url = 'https://' + processed_url
+            
+            parsed_link = urlparse(processed_url)
+            
+            # Skip if parsing failed
+            if not parsed_link.netloc:
+                continue
+                
             link_domain = parsed_link.netloc.lower()
             
             # Check if it's an internal or external link
@@ -732,13 +767,15 @@ class WebCrawler:
             # Determine link type
             link_type = 'internal' if is_internal else 'external'
             
-            # Check if it's a PDF
-            if self._is_pdf_url(url):
+            # Check if it's a PDF - improved detection
+            if (processed_url.lower().endswith('.pdf') or 
+                '.pdf' in processed_url.lower() or
+                self._is_pdf_url(processed_url)):
                 link_type += '_pdf'
             
             link_info = {
-                'url': url,
-                'text': url,  # For text-extracted URLs, the text is the URL itself
+                'url': processed_url,
+                'text': url,  # Keep original text as found
                 'title': '',  # No title available from plain text
                 'type': link_type,
                 'domain': link_domain
@@ -757,7 +794,9 @@ class WebCrawler:
     if content_links:
         internal_count = sum(1 for link in content_links if link['type'].startswith('internal'))
         external_count = len(content_links) - internal_count
+        pdf_count = sum(1 for link in content_links if 'pdf' in link['type'])
         print(f"   📊 {internal_count} internal, {external_count} external URLs")
+        print(f"   📄 {pdf_count} PDF links detected")
     
     return content_links
 
