@@ -339,7 +339,11 @@ class WebCrawler:
     print(f"🧹 Filtering PDF content for: {url}")
     
     # FIRST: Extract URLs from the raw PDF text before cleaning removes them
-    raw_urls = self._extract_urls_from_raw_text(pdf_text)
+    print(f"🔍 DEBUG: Raw PDF text length: {len(pdf_text)} characters")
+    print(f"🔍 DEBUG: Raw PDF text preview: {pdf_text[:500]}...")
+    
+    raw_urls = self._extract_urls_from_raw_text_debug(pdf_text)
+    print(f"🔍 DEBUG: Found {len(raw_urls)} raw URLs: {raw_urls}")
     
     # Split into lines for processing
     lines = pdf_text.split('\n')
@@ -396,6 +400,8 @@ class WebCrawler:
     
     # Rejoin lines
     cleaned_text = ' '.join(cleaned_lines)
+    print(f"🔍 DEBUG: Cleaned text length: {len(cleaned_text)} characters")
+    print(f"🔍 DEBUG: Cleaned text preview: {cleaned_text[:500]}...")
     
     # Apply general text cleaning
     cleaned_text = self._clean_extracted_text(cleaned_text)
@@ -405,13 +411,17 @@ class WebCrawler:
     cleaned_text = self._remove_repeated_content(cleaned_text)
     
     # Re-inject URLs that were found in raw text if they're not already present
-    cleaned_text = self._preserve_urls_in_cleaned_text(cleaned_text, raw_urls)
+    cleaned_text = self._preserve_urls_in_cleaned_text_debug(cleaned_text, raw_urls)
     
     print(f"📏 Final PDF content length: {len(cleaned_text)} characters")
     return cleaned_text
 
-  def _extract_urls_from_raw_text(self, text: str) -> List[str]:
-    """Extract URLs from raw text before cleaning."""
+  def _extract_urls_from_raw_text_debug(self, text: str) -> List[str]:
+    """Extract URLs from raw text before cleaning - DEBUG VERSION."""
+    import re
+    
+    print(f"🔍 DEBUG: Starting URL extraction from raw text")
+    
     url_patterns = [
         r'https?://[^\s<>"\']+[^\s<>"\'\.,;:!?\)]',
         r'www\.[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s<>"\']*[^\s<>"\'\.,;:!?\)]',
@@ -419,415 +429,60 @@ class WebCrawler:
     ]
     
     found_urls = set()
-    for pattern in url_patterns:
+    
+    for i, pattern in enumerate(url_patterns):
+        print(f"🔍 DEBUG: Testing pattern {i+1}: {pattern}")
         matches = re.findall(pattern, text, re.IGNORECASE)
+        print(f"🔍 DEBUG: Pattern {i+1} found {len(matches)} matches: {matches}")
+        
         for match in matches:
             url = match.strip()
-            if self._is_likely_url(url):
+            print(f"🔍 DEBUG: Processing match: '{url}'")
+            
+            # Simple validation - don't use _is_likely_url yet
+            if len(url) >= 4 and url.count('.') <= 10:
                 found_urls.add(url)
+                print(f"🔍 DEBUG: Added URL: '{url}'")
+            else:
+                print(f"🔍 DEBUG: Rejected URL: '{url}' (too short or too many dots)")
     
-    return list(found_urls)
+    final_urls = list(found_urls)
+    print(f"🔍 DEBUG: Final raw URLs found: {final_urls}")
+    return final_urls
 
-  def _preserve_urls_in_cleaned_text(self, cleaned_text: str, raw_urls: List[str]) -> str:
-    """Re-inject URLs that may have been removed during cleaning."""
+  def _preserve_urls_in_cleaned_text_debug(self, cleaned_text: str, raw_urls: List[str]) -> str:
+    """Re-inject URLs that may have been removed during cleaning - DEBUG VERSION."""
+    print(f"🔍 DEBUG: Checking if {len(raw_urls)} URLs are preserved in cleaned text")
+    
     missing_urls = []
     for url in raw_urls:
-        # Check if URL is missing from cleaned text
+        print(f"🔍 DEBUG: Checking if '{url}' is in cleaned text...")
         if url not in cleaned_text:
             missing_urls.append(url)
+            print(f"🔍 DEBUG: Missing URL: '{url}'")
+        else:
+            print(f"🔍 DEBUG: URL preserved: '{url}'")
     
     if missing_urls:
-        print(f"🔗 Re-injecting {len(missing_urls)} URLs that were removed during cleaning")
+        print(f"🔗 Re-injecting {len(missing_urls)} URLs that were removed during cleaning: {missing_urls}")
         # Add missing URLs at the end
         cleaned_text += " " + " ".join(missing_urls)
+    else:
+        print(f"🔍 DEBUG: All URLs were preserved in cleaned text")
     
     return cleaned_text
 
-  def _remove_repeated_content(self, text: str) -> str:
-    """
-    Remove content that appears to be repeated headers/footers in PDFs.
-    """
-    # Split into sentences for analysis
-    sentences = re.split(r'[.!?]+', text)
-    sentence_counts = {}
-    
-    # Count occurrences of each sentence
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if len(sentence) > 10:  # Only count substantial sentences
-            sentence_counts[sentence] = sentence_counts.get(sentence, 0) + 1
-    
-    # Find sentences that appear too frequently (likely headers/footers)
-    repeated_sentences = []
-    for sentence, count in sentence_counts.items():
-        if count > 2 and len(sentence) < 100:  # Short sentences repeated many times
-            repeated_sentences.append(sentence)
-    
-    # Remove repeated sentences
-    for repeated in repeated_sentences:
-        text = text.replace(repeated, '')
-    
-    if repeated_sentences:
-        print(f"🔄 Removed {len(repeated_sentences)} repeated content patterns")
-    
-    return text
-
-  def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
-    """
-    Crawl website starting from given URL up to specified depth.
-    
-    Args:
-      start_url: URL to start crawling from
-      max_depth: Maximum depth of pages to crawl
-      strict_domain: If True, only crawl within the exact subdomain of the starting URL
-        
-    Returns: List of dictionaries containing page data
-    """
-    self.strict_domain = strict_domain
-    
-    # Reset visited URLs for each new crawl operation
-    self.visited_urls.clear()
-    
-    # Extract base domain from start URL and add to allowed domains
-    parsed_start_url = urlparse(start_url)
-    base_domain = parsed_start_url.netloc.lower()
-    
-    if strict_domain:
-      # In strict mode, only allow the exact subdomain
-      print(f"🔒 STRICT DOMAIN MODE: Only crawling {base_domain} and its sub-paths")
-      self.allowed_domains = {base_domain}
-    else:
-      # Original behavior - allow domain variations
-      self.allowed_domains = set()  # Reset allowed domains
-      self.allowed_domains.add(base_domain)
-      
-      # Also allow the main domain without subdomain
-      if base_domain.startswith('www.'):
-        self.allowed_domains.add(base_domain[4:])
-      elif not base_domain.startswith('www.'):
-        self.allowed_domains.add(f'www.{base_domain}')
-      
-      # For unitedspinal.org, allow all subdomains
-      if 'unitedspinal.org' in base_domain:
-        self.allowed_domains.add('unitedspinal.org')
-        self.allowed_domains.add('www.unitedspinal.org')
-    
-    results = []
-    # Start with empty path for root URL and no parent URL for the starting URL
-    self._crawl_recursive(start_url, 0, max_depth, results, [], None)
-    return results
-
-  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None):
-    # Normalize URL for deduplication
-    normalized_url = self._normalize_url(url)
-    
-    # Check against normalized URL for deduplication
-    if (current_depth > max_depth or 
-      normalized_url in self.visited_urls or 
-      not self._should_crawl(url, parent_url)):
-      return
-
-    try:
-      # Check if page is cached using normalized URL
-      cache_key = self._get_page_cache_key(url)
-      if cache_key in self.page_cache:
-        print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
-        print(f"🔗 Normalized to: {normalized_url}")
-        cached_page = self.page_cache[cache_key].copy()
-        cached_page['depth'] = current_depth
-        cached_page['navigation_path'] = path.copy()
-        # Use original URL in results, not normalized
-        cached_page['url'] = url
-        results.append(cached_page)
-        self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
-        
-        # Continue crawling links from cached page if not at max depth and not a PDF
-        if current_depth < max_depth and cached_page.get('content_type', 'html') != 'pdf':
-          soup = BeautifulSoup(cached_page['html'], 'html.parser')
-          current_page_info = {'url': url, 'title': cached_page['title']}
-          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
-        return
-
-      print(f"🌐 Crawling [Depth {current_depth}]: {url}")
-      if url != normalized_url:
-        print(f"🔗 Normalized to: {normalized_url}")
-      time.sleep(self.delay)
-      self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
-      
-      # Handle PDF files detected by URL extension
-      if self._is_pdf_url(url):
-        print(f"🔍 PDF DETECTED BY URL: {url}")
-        print(f"📄 Starting PDF scraping process...")
-        self._process_pdf(url, current_depth, results, path)
-        return
-      
-      # Make request to check content type
-      response = self.session.get(url, timeout=15)
-      if response.status_code != 200:
-        print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
-        return
-      
-      # Check if this is actually a PDF based on content type or content
-      content_type = response.headers.get('content-type', '').lower()
-      is_pdf_content = (content_type.startswith('application/pdf') or 
-                       (response.content and response.content.startswith(b'%PDF-')))
-      
-      if is_pdf_content and self.parse_pdfs:
-        print(f"🔍 PDF DETECTED BY CONTENT: {url}")
-        print(f"📄 Content-Type: {content_type}")
-        print(f"📄 Starting PDF scraping process...")
-        self._process_pdf_from_response(url, response, current_depth, results, path)
-        return
-      elif is_pdf_content and not self.parse_pdfs:
-        print(f"📄 PDF detected but parsing disabled: {url}")
-        return
-      
-      # Process as HTML
-      soup = BeautifulSoup(response.text, 'html.parser')
-      page_title = soup.title.string if soup.title else 'No Title'
-      
-      print(f"✅ Successfully scraped: {page_title}")
-      
-      # Extract main content with filtering
-      clean_text = self._extract_main_content(soup, url)
-      
-      # Extract links from main content area
-      content_links = self._extract_content_links(soup, url)
-      
-      # Create page data (keep original URL for display purposes)
-      page_data = {
-        'url': url,  # Keep original URL
-        'title': page_title,
-        'html': response.text,
-        'text': clean_text,
-        'content_links': content_links,  # Add extracted links
-        'depth': current_depth,
-        'content_type': 'html',
-        'navigation_path': path.copy()
-      }
-      
-      # Cache the page (without depth and path since they can vary)
-      cache_data = page_data.copy()
-      del cache_data['depth']
-      del cache_data['navigation_path']
-      self.page_cache[cache_key] = cache_data
-      
-      # Store page data
-      results.append(page_data)
-      
-      # Only continue if we haven't reached max depth
-      if current_depth < max_depth:
-        current_page_info = {'url': url, 'title': page_title}
-        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
-                
-    except Exception as e:
-      print(f"❌ Error crawling {url}: {str(e)}")
-
-  def _process_pdf(self, url: str, current_depth: int, results: List[Dict], path: List[Dict]):
-    """Process a PDF file."""
-    try:
-      print(f"📄 Processing PDF [Depth {current_depth}]: {url}")
-      
-      # Download PDF content
-      response = self.session.get(url, timeout=30)
-      if response.status_code != 200:
-        print(f"❌ Failed to download PDF {url}: Status code {response.status_code}")
-        return
-      
-      # Extract text from PDF
-      pdf_text = self._extract_pdf_text(response.content)
-      
-      if not pdf_text:
-        print(f"⚠️  No text extracted from PDF: {url}")
-        return
-      
-      # Clean and filter PDF text
-      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
-      
-      # Extract URLs from PDF text content
-      content_links = self._extract_urls_from_text(clean_pdf_text, url)
-      
-      # Get PDF title from URL or content
-      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
-      
-      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
-      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
-      
-      # Create page data for PDF
-      page_data = {
-        'url': url,
-        'title': pdf_title,
-        'html': '',  # PDFs don't have HTML
-        'text': clean_pdf_text,
-        'content_links': content_links,  # Now includes URLs found in PDF text
-        'depth': current_depth,
-        'content_type': 'pdf',
-        'navigation_path': path.copy()
-      }
-      
-      # Cache the PDF data
-      cache_key = self._get_page_cache_key(url)
-      cache_data = page_data.copy()
-      del cache_data['depth']
-      del cache_data['navigation_path']
-      self.page_cache[cache_key] = cache_data
-      
-      # Store PDF data
-      results.append(page_data)
-      
-      # Crawl URLs found in PDF content if not at max depth
-      if current_depth < max_depth and content_links:
-        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
-        current_page_info = {'url': url, 'title': pdf_title}
-        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
-      
-    except Exception as e:
-      print(f"❌ Error processing PDF {url}: {str(e)}")
-
-  def _process_pdf_from_response(self, url: str, response, current_depth: int, results: List[Dict], path: List[Dict]):
-    """Process a PDF file from an already downloaded response."""
-    try:
-      print(f"📄 Processing PDF from response [Depth {current_depth}]: {url}")
-      
-      # Extract text from PDF
-      pdf_text = self._extract_pdf_text(response.content)
-      
-      if not pdf_text:
-        print(f"⚠️  No text extracted from PDF: {url}")
-        return
-      
-      # Clean and filter PDF text
-      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
-      
-      # Extract URLs from PDF text content
-      content_links = self._extract_urls_from_text(clean_pdf_text, url)
-      
-      # Get PDF title from URL or content
-      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
-      
-      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
-      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
-      
-      # Create page data for PDF
-      page_data = {
-        'url': url,
-        'title': pdf_title,
-        'html': '',  # PDFs don't have HTML
-        'text': clean_pdf_text,
-        'content_links': content_links,  # Now includes URLs found in PDF text
-        'depth': current_depth,
-        'content_type': 'pdf',
-        'navigation_path': path.copy()
-      }
-      
-      # Cache the PDF data
-      cache_key = self._get_page_cache_key(url)
-      cache_data = page_data.copy()
-      del cache_data['depth']
-      del cache_data['navigation_path']
-      self.page_cache[cache_key] = cache_data
-      
-      # Store PDF data
-      results.append(page_data)
-      
-      # Crawl URLs found in PDF content if not at max depth
-      if current_depth < max_depth and content_links:
-        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
-        current_page_info = {'url': url, 'title': pdf_title}
-        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
-      
-    except Exception as e:
-      print(f"❌ Error processing PDF from response {url}: {str(e)}")
-
-  def _should_crawl(self, url: str, current_url: str = None) -> bool:
-    """
-    Determine if URL should be crawled based on various rules.
-    Now includes domain filtering with external link allowance.
-    """
-    try:
-        parsed_url = urlparse(url)
-        domain = parsed_url.netloc.lower()
-        
-        # Check URL scheme
-        if parsed_url.scheme not in ('http', 'https'):
-            return False
-        
-        # Domain filtering logic
-        if self.allowed_domains:
-            is_internal_domain = self._is_internal_domain(domain)
-            
-            if is_internal_domain:
-                # Always allow internal domains
-                pass
-            else:
-                # External domain - only allow if we're coming from an internal domain
-                if current_url:
-                    current_parsed = urlparse(current_url)
-                    current_domain = current_parsed.netloc.lower()
-                    is_current_internal = self._is_internal_domain(current_domain)
-                    
-                    if not is_current_internal:
-                        # We're on an external domain, don't crawl more external links
-                        return False
-                else:
-                    # No current URL context, block external domains
-                    return False
-        
-        # Exclude common social media and external platforms
-        excluded_domains = [
-            'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com',
-            'youtube.com', 'tiktok.com', 'snapchat.com', 'pinterest.com',
-            'reddit.com', 'tumblr.com', 'flickr.com', 'vimeo.com',
-            'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
-            'apple.com', 'microsoft.com', 'adobe.com', 'paypal.com'
-        ]
-        
-        for excluded in excluded_domains:
-            if domain == excluded or domain.endswith('.' + excluded):
-                return False
-        
-        # Handle PDF files
-        if parsed_url.path.lower().endswith('.pdf'):
-            return self.parse_pdfs  # Only allow PDFs if PDF parsing is enabled
-            
-        # Ignore common non-HTML extensions (excluding PDF when PDF parsing is enabled)
-        ignored_extensions = [
-            '.jpg', '.jpeg', '.png', '.gif', '.doc', 
-            '.docx', '.ppt', '.pptx', '.zip', '.tar', '.gz',
-            '.mp4', '.avi', '.mov', '.mp3', '.wav', '.exe'
-        ]
-        
-        # Add PDF to ignored extensions only if PDF parsing is disabled
-        if not self.parse_pdfs:
-            ignored_extensions.append('.pdf')
-        
-        if any(parsed_url.path.lower().endswith(ext) for ext in ignored_extensions):
-            return False
-        
-        # Skip common non-content paths
-        ignored_paths = [
-            '/api/', '/admin/', '/login/', '/logout/', '/register/',
-            '/wp-admin/', '/wp-content/', '/node_modules/', '/assets/'
-        ]
-        if any(ignored_path in parsed_url.path.lower() for ignored_path in ignored_paths):
-            return False
-        
-        return True
-            
-    except Exception:
+  def _is_likely_url(self, text: str) -> bool:
+    """Check if text is likely a real URL vs a false positive."""
+    # Skip version numbers, decimals, etc.
+    if re.match(r'^\d+\.\d+', text):  # Version numbers like "1.0"
         return False
-
-  def _is_internal_domain(self, domain: str) -> bool:
-    """Check if a domain is considered internal (allowed)."""
-    if self.strict_domain:
-        # In strict mode, domain must match exactly
-        return domain in self.allowed_domains
-    else:
-        # Original behavior - allow subdomains
-        for allowed_domain in self.allowed_domains:
-            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
-                return True
+    if re.match(r'^\w+\.\w+$', text) and len(text) < 8:  # Very short, likely not URL
         return False
+    # Skip common file extensions without paths
+    if re.match(r'^\w+\.(jpg|png|gif|pdf|doc|docx|txt|csv)$', text, re.IGNORECASE):
+        return False
+    return True
 
   def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     """Extract and crawl links from a BeautifulSoup object."""
@@ -1103,18 +758,6 @@ class WebCrawler:
     
     return content_links
 
-  def _is_likely_url(self, text: str) -> bool:
-    """Check if text is likely a real URL vs a false positive."""
-    # Skip version numbers, decimals, etc.
-    if re.match(r'^\d+\.\d+', text):  # Version numbers like "1.0"
-        return False
-    if re.match(r'^\w+\.\w+$', text) and len(text) < 8:  # Very short, likely not URL
-        return False
-    # Skip common file extensions without paths
-    if re.match(r'^\w+\.(jpg|png|gif|pdf|doc|docx|txt|csv)$', text, re.IGNORECASE):
-        return False
-    return True
-
   def _crawl_links_from_pdf(self, content_links: List[Dict], source_url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
     """Extract and crawl links found in PDF text content."""
     print(f"🔗 Processing {len(content_links)} URLs found in PDF: {source_url}")
@@ -1157,3 +800,360 @@ class WebCrawler:
             )
     
     print(f"📊 Crawled {links_found} valid URLs from PDF {source_url} ({external_links_found} external)")
+
+  def _should_crawl(self, url: str, current_url: str = None) -> bool:
+    """
+    Determine if URL should be crawled based on various rules.
+    Now includes domain filtering with external link allowance.
+    """
+    try:
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        
+        # Check URL scheme
+        if parsed_url.scheme not in ('http', 'https'):
+            return False
+        
+        # Domain filtering logic
+        if self.allowed_domains:
+            is_internal_domain = self._is_internal_domain(domain)
+            
+            if is_internal_domain:
+                # Always allow internal domains
+                pass
+            else:
+                # External domain - only allow if we're coming from an internal domain
+                if current_url:
+                    current_parsed = urlparse(current_url)
+                    current_domain = current_parsed.netloc.lower()
+                    is_current_internal = self._is_internal_domain(current_domain)
+                    
+                    if not is_current_internal:
+                        # We're on an external domain, don't crawl more external links
+                        return False
+                else:
+                    # No current URL context, block external domains
+                    return False
+        
+        # Exclude common social media and external platforms
+        excluded_domains = [
+            'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com',
+            'youtube.com', 'tiktok.com', 'snapchat.com', 'pinterest.com',
+            'reddit.com', 'tumblr.com', 'flickr.com', 'vimeo.com',
+            'google.com', 'bing.com', 'yahoo.com', 'amazon.com',
+            'apple.com', 'microsoft.com', 'adobe.com', 'paypal.com'
+        ]
+        
+        for excluded in excluded_domains:
+            if domain == excluded or domain.endswith('.' + excluded):
+                return False
+        
+        # Handle PDF files
+        if parsed_url.path.lower().endswith('.pdf'):
+            return self.parse_pdfs  # Only allow PDFs if PDF parsing is enabled
+            
+        # Ignore common non-HTML extensions (excluding PDF when PDF parsing is enabled)
+        ignored_extensions = [
+            '.jpg', '.jpeg', '.png', '.gif', '.doc', 
+            '.docx', '.ppt', '.pptx', '.zip', '.tar', '.gz',
+            '.mp4', '.avi', '.mov', '.mp3', '.wav', '.exe'
+        ]
+        
+        # Add PDF to ignored extensions only if PDF parsing is disabled
+        if not self.parse_pdfs:
+            ignored_extensions.append('.pdf')
+        
+        if any(parsed_url.path.lower().endswith(ext) for ext in ignored_extensions):
+            return False
+        
+        # Skip common non-content paths
+        ignored_paths = [
+            '/api/', '/admin/', '/login/', '/logout/', '/register/',
+            '/wp-admin/', '/wp-content/', '/node_modules/', '/assets/'
+        ]
+        if any(ignored_path in parsed_url.path.lower() for ignored_path in ignored_paths):
+            return False
+        
+        return True
+            
+    except Exception:
+        return False
+
+  def _is_internal_domain(self, domain: str) -> bool:
+    """Check if a domain is considered internal (allowed)."""
+    if self.strict_domain:
+        # In strict mode, domain must match exactly
+        return domain in self.allowed_domains
+    else:
+        # Original behavior - allow subdomains
+        for allowed_domain in self.allowed_domains:
+            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
+                return True
+        return False
+
+  def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
+    """
+    Crawl website starting from given URL up to specified depth.
+    
+    Args:
+      start_url: URL to start crawling from
+      max_depth: Maximum depth of pages to crawl
+      strict_domain: If True, only crawl within the exact subdomain of the starting URL
+        
+    Returns: List of dictionaries containing page data
+    """
+    self.strict_domain = strict_domain
+    
+    # Reset visited URLs for each new crawl operation
+    self.visited_urls.clear()
+    
+    # Extract base domain from start URL and add to allowed domains
+    parsed_start_url = urlparse(start_url)
+    base_domain = parsed_start_url.netloc.lower()
+    
+    if strict_domain:
+      # In strict mode, only allow the exact subdomain
+      print(f"🔒 STRICT DOMAIN MODE: Only crawling {base_domain} and its sub-paths")
+      self.allowed_domains = {base_domain}
+    else:
+      # Original behavior - allow domain variations
+      self.allowed_domains = set()  # Reset allowed domains
+      self.allowed_domains.add(base_domain)
+      
+      # Also allow the main domain without subdomain
+      if base_domain.startswith('www.'):
+        self.allowed_domains.add(base_domain[4:])
+      elif not base_domain.startswith('www.'):
+        self.allowed_domains.add(f'www.{base_domain}')
+      
+      # For unitedspinal.org, allow all subdomains
+      if 'unitedspinal.org' in base_domain:
+        self.allowed_domains.add('unitedspinal.org')
+        self.allowed_domains.add('www.unitedspinal.org')
+    
+    results = []
+    # Start with empty path for root URL and no parent URL for the starting URL
+    self._crawl_recursive(start_url, 0, max_depth, results, [], None)
+    return results
+
+  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None):
+    # Normalize URL for deduplication
+    normalized_url = self._normalize_url(url)
+    
+    # Check against normalized URL for deduplication
+    if (current_depth > max_depth or 
+      normalized_url in self.visited_urls or 
+      not self._should_crawl(url, parent_url)):
+      return
+
+    try:
+      # Check if page is cached using normalized URL
+      cache_key = self._get_page_cache_key(url)
+      if cache_key in self.page_cache:
+        print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
+        print(f"🔗 Normalized to: {normalized_url}")
+        cached_page = self.page_cache[cache_key].copy()
+        cached_page['depth'] = current_depth
+        cached_page['navigation_path'] = path.copy()
+        # Use original URL in results, not normalized
+        cached_page['url'] = url
+        results.append(cached_page)
+        self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
+        
+        # Continue crawling links from cached page if not at max depth and not a PDF
+        if current_depth < max_depth and cached_page.get('content_type', 'html') != 'pdf':
+          soup = BeautifulSoup(cached_page['html'], 'html.parser')
+          current_page_info = {'url': url, 'title': cached_page['title']}
+          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
+        return
+
+      print(f"🌐 Crawling [Depth {current_depth}]: {url}")
+      if url != normalized_url:
+        print(f"🔗 Normalized to: {normalized_url}")
+      time.sleep(self.delay)
+      self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
+      
+      # Handle PDF files detected by URL extension
+      if self._is_pdf_url(url):
+        print(f"🔍 PDF DETECTED BY URL: {url}")
+        print(f"📄 Starting PDF scraping process...")
+        self._process_pdf(url, current_depth, results, path)
+        return
+      
+      # Make request to check content type
+      response = self.session.get(url, timeout=15)
+      if response.status_code != 200:
+        print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
+        return
+      
+      # Check if this is actually a PDF based on content type or content
+      content_type = response.headers.get('content-type', '').lower()
+      is_pdf_content = (content_type.startswith('application/pdf') or 
+                       (response.content and response.content.startswith(b'%PDF-')))
+      
+      if is_pdf_content and self.parse_pdfs:
+        print(f"🔍 PDF DETECTED BY CONTENT: {url}")
+        print(f"📄 Content-Type: {content_type}")
+        print(f"📄 Starting PDF scraping process...")
+        self._process_pdf_from_response(url, response, current_depth, results, path)
+        return
+      elif is_pdf_content and not self.parse_pdfs:
+        print(f"📄 PDF detected but parsing disabled: {url}")
+        return
+      
+      # Process as HTML
+      soup = BeautifulSoup(response.text, 'html.parser')
+      page_title = soup.title.string if soup.title else 'No Title'
+      
+      print(f"✅ Successfully scraped: {page_title}")
+      
+      # Extract main content with filtering
+      clean_text = self._extract_main_content(soup, url)
+      
+      # Extract links from main content area
+      content_links = self._extract_content_links(soup, url)
+      
+      # Create page data (keep original URL for display purposes)
+      page_data = {
+        'url': url,  # Keep original URL
+        'title': page_title,
+        'html': response.text,
+        'text': clean_text,
+        'content_links': content_links,  # Add extracted links
+        'depth': current_depth,
+        'content_type': 'html',
+        'navigation_path': path.copy()
+      }
+      
+      # Cache the page (without depth and path since they can vary)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      del cache_data['navigation_path']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store page data
+      results.append(page_data)
+      
+      # Only continue if we haven't reached max depth
+      if current_depth < max_depth:
+        current_page_info = {'url': url, 'title': page_title}
+        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
+                
+    except Exception as e:
+      print(f"❌ Error crawling {url}: {str(e)}")
+
+  def _process_pdf(self, url: str, current_depth: int, results: List[Dict], path: List[Dict]):
+    """Process a PDF file."""
+    try:
+      print(f"📄 Processing PDF [Depth {current_depth}]: {url}")
+      
+      # Download PDF content
+      response = self.session.get(url, timeout=30)
+      if response.status_code != 200:
+        print(f"❌ Failed to download PDF {url}: Status code {response.status_code}")
+        return
+      
+      # Extract text from PDF
+      pdf_text = self._extract_pdf_text(response.content)
+      
+      if not pdf_text:
+        print(f"⚠️  No text extracted from PDF: {url}")
+        return
+      
+      # Clean and filter PDF text
+      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
+      
+      # Extract URLs from PDF text content
+      content_links = self._extract_urls_from_text(clean_pdf_text, url)
+      
+      # Get PDF title from URL or content
+      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
+      
+      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
+      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
+      
+      # Create page data for PDF
+      page_data = {
+        'url': url,
+        'title': pdf_title,
+        'html': '',  # PDFs don't have HTML
+        'text': clean_pdf_text,
+        'content_links': content_links,  # Now includes URLs found in PDF text
+        'depth': current_depth,
+        'content_type': 'pdf',
+        'navigation_path': path.copy()
+      }
+      
+      # Cache the PDF data
+      cache_key = self._get_page_cache_key(url)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      del cache_data['navigation_path']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store PDF data
+      results.append(page_data)
+      
+      # Crawl URLs found in PDF content if not at max depth
+      if current_depth < max_depth and content_links:
+        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
+        current_page_info = {'url': url, 'title': pdf_title}
+        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
+      
+    except Exception as e:
+      print(f"❌ Error processing PDF {url}: {str(e)}")
+
+  def _process_pdf_from_response(self, url: str, response, current_depth: int, results: List[Dict], path: List[Dict]):
+    """Process a PDF file from an already downloaded response."""
+    try:
+      print(f"📄 Processing PDF from response [Depth {current_depth}]: {url}")
+      
+      # Extract text from PDF
+      pdf_text = self._extract_pdf_text(response.content)
+      
+      if not pdf_text:
+        print(f"⚠️  No text extracted from PDF: {url}")
+        return
+      
+      # Clean and filter PDF text
+      clean_pdf_text = self._clean_pdf_text(pdf_text, url)
+      
+      # Extract URLs from PDF text content
+      content_links = self._extract_urls_from_text(clean_pdf_text, url)
+      
+      # Get PDF title from URL or content
+      pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
+      
+      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
+      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
+      
+      # Create page data for PDF
+      page_data = {
+        'url': url,
+        'title': pdf_title,
+        'html': '',  # PDFs don't have HTML
+        'text': clean_pdf_text,
+        'content_links': content_links,  # Now includes URLs found in PDF text
+        'depth': current_depth,
+        'content_type': 'pdf',
+        'navigation_path': path.copy()
+      }
+      
+      # Cache the PDF data
+      cache_key = self._get_page_cache_key(url)
+      cache_data = page_data.copy()
+      del cache_data['depth']
+      del cache_data['navigation_path']
+      self.page_cache[cache_key] = cache_data
+      
+      # Store PDF data
+      results.append(page_data)
+      
+      # Crawl URLs found in PDF content if not at max depth
+      if current_depth < max_depth and content_links:
+        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
+        current_page_info = {'url': url, 'title': pdf_title}
+        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
+      
+    except Exception as e:
+      print(f"❌ Error processing PDF from response {url}: {str(e)}")
