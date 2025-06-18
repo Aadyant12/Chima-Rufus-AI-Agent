@@ -999,12 +999,18 @@ class WebCrawler:
         cached_page['navigation_path'] = path.copy()
         # Use original URL in results, not normalized
         cached_page['url'] = url
+        
+        # Remove HTML from results - it should only be used internally for link crawling
+        if 'html' in cached_page:
+          html_for_crawling = cached_page['html']
+          del cached_page['html']
+        
         results.append(cached_page)
         self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
         
         # Continue crawling links from cached page if not at max depth and not a PDF
         if current_depth < max_depth and cached_page.get('content_type', 'html') != 'pdf':
-          soup = BeautifulSoup(cached_page['html'], 'html.parser')
+          soup = BeautifulSoup(html_for_crawling, 'html.parser')
           current_page_info = {'url': url, 'title': cached_page['title']}
           self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
         return
