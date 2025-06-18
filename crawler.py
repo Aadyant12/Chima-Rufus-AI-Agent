@@ -1059,7 +1059,6 @@ class WebCrawler:
       page_data = {
         'url': url,  # Keep original URL
         'title': page_title,
-        'html': response.text,
         'text': clean_text,
         'content_links': content_links,  # Add extracted links
         'depth': current_depth,
@@ -1069,6 +1068,7 @@ class WebCrawler:
       
       # Cache the page (without depth and path since they can vary)
       cache_data = page_data.copy()
+      cache_data['html'] = response.text  # Store HTML only in cache for link crawling
       del cache_data['depth']
       del cache_data['navigation_path']
       self.page_cache[cache_key] = cache_data
@@ -1118,7 +1118,6 @@ class WebCrawler:
       page_data = {
         'url': url,
         'title': pdf_title,
-        'html': '',  # PDFs don't have HTML
         'text': clean_pdf_text,
         'content_links': content_links,  # Now includes URLs found in PDF text
         'depth': current_depth,
@@ -1173,7 +1172,6 @@ class WebCrawler:
       page_data = {
         'url': url,
         'title': pdf_title,
-        'html': '',  # PDFs don't have HTML
         'text': clean_pdf_text,
         'content_links': content_links,  # Now includes URLs found in PDF text
         'depth': current_depth,
