@@ -7,6 +7,7 @@ import hashlib
 import io
 import re
 import copy
+from collections import deque  # Add this import for the queue
 
 # PDF parsing imports
 # try:
@@ -936,7 +937,7 @@ class WebCrawler:
 
   def crawl(self, start_url: str, max_depth: int = 3, strict_domain: bool = False) -> List[Dict]:
     """
-    Crawl website starting from given URL up to specified depth.
+    Crawl website starting from given URL up to specified depth using breadth-first traversal.
     
     Args:
       start_url: URL to start crawling from
@@ -975,67 +976,106 @@ class WebCrawler:
         self.allowed_domains.add('www.unitedspinal.org')
     
     results = []
-    # Start with empty path for root URL and no parent URL for the starting URL
-    self._crawl_recursive(start_url, 0, max_depth, results, [], None)
+    
+    # Initialize queue for breadth-first traversal
+    # Queue items: (url, depth, path, parent_url)
+    crawl_queue = deque([(start_url, 0, [], None)])
+    
+    print(f"🚀 Starting BREADTH-FIRST crawling from: {start_url}")
+    print(f"📊 Max depth: {max_depth}")
+    
+    # Process queue until empty
+    while crawl_queue:
+      current_batch_size = len(crawl_queue)
+      current_depth = crawl_queue[0][1] if crawl_queue else 0
+      
+      print(f"\n🔄 Processing depth {current_depth}: {current_batch_size} URLs in queue")
+      
+      # Process all URLs at current depth before moving to next depth
+      depth_urls_processed = 0
+      while crawl_queue and crawl_queue[0][1] == current_depth:
+        url, depth, path, parent_url = crawl_queue.popleft()
+        depth_urls_processed += 1
+        
+        print(f"  📍 [{depth_urls_processed}/{current_batch_size}] Processing: {url}")
+        
+        # Process this URL and collect any new URLs to add to queue
+        new_urls = self._process_url_breadth_first(url, depth, max_depth, results, path, parent_url)
+        
+        # Add new URLs to queue for next depth level
+        for new_url, new_path in new_urls:
+          if depth + 1 <= max_depth:
+            # Check for duplicates before adding to queue
+            normalized_new_url = self._normalize_url(new_url)
+            if normalized_new_url not in self.visited_urls:
+              crawl_queue.append((new_url, depth + 1, new_path, url))
+      
+      print(f"✅ Completed depth {current_depth}: processed {depth_urls_processed} URLs")
+    
+    print(f"🏁 Breadth-first crawling completed! Total pages: {len(results)}")
     return results
 
-  def _crawl_recursive(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None):
+  def _process_url_breadth_first(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None) -> List[tuple]:
+    """
+    Process a single URL and return list of new URLs to crawl.
+    Returns: List of (url, path) tuples for URLs to add to queue
+    """
     # Normalize URL for deduplication
     normalized_url = self._normalize_url(url)
     
-    # Check against normalized URL for deduplication
-    if (current_depth > max_depth or 
-      normalized_url in self.visited_urls or 
-      not self._should_crawl(url, parent_url)):
-      return
+    # Check if we should skip this URL
+    if (normalized_url in self.visited_urls or 
+        not self._should_crawl(url, parent_url)):
+      return []
+
+    new_urls = []  # URLs to add to crawl queue
 
     try:
       # Check if page is cached using normalized URL
       cache_key = self._get_page_cache_key(url)
       if cache_key in self.page_cache:
-        print(f"💾 Cache hit for [Depth {current_depth}]: {url}")
-        print(f"🔗 Normalized to: {normalized_url}")
+        print(f"    💾 Cache hit: {url}")
         # Remove HTML from cached data before copying
         if 'html' in self.page_cache[cache_key]:
-          html_for_crawling = self.page_cache[cache_key]['html']
+          html_for_link_extraction = self.page_cache[cache_key]['html']
           # Create a copy without HTML for results
           cached_page = {k: v for k, v in self.page_cache[cache_key].items() if k != 'html'}
         else:
           cached_page = self.page_cache[cache_key].copy()
-          html_for_crawling = None
+          html_for_link_extraction = None
+        
         cached_page['depth'] = current_depth
         cached_page['navigation_path'] = path.copy()
         # Use original URL in results, not normalized
         cached_page['url'] = url
         
         results.append(cached_page)
-        self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
+        self.visited_urls.add(normalized_url)
         
-        # Continue crawling links from cached page if not at max depth and not a PDF
+        # Extract links for next depth level if not at max depth and not a PDF
         if current_depth < max_depth and cached_page.get('content_type', 'html') != 'pdf':
-          soup = BeautifulSoup(html_for_crawling, 'html.parser')
-          current_page_info = {'url': url, 'title': cached_page['title']}
-          self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
-        return
+          if html_for_link_extraction:
+            soup = BeautifulSoup(html_for_link_extraction, 'html.parser')
+            current_page_info = {'url': url, 'title': cached_page['title']}
+            new_urls = self._extract_urls_for_queue(soup, url, path + [current_page_info])
+        
+        return new_urls
 
-      print(f"🌐 Crawling [Depth {current_depth}]: {url}")
-      if url != normalized_url:
-        print(f"🔗 Normalized to: {normalized_url}")
+      print(f"    🌐 Fetching: {url}")
       time.sleep(self.delay)
-      self.visited_urls.add(normalized_url)  # Add normalized URL to visited set
+      self.visited_urls.add(normalized_url)
       
       # Handle PDF files detected by URL extension
       if self._is_pdf_url(url):
-        print(f"🔍 PDF DETECTED BY URL: {url}")
-        print(f"📄 Starting PDF scraping process...")
-        self._process_pdf(url, current_depth, results, path)
-        return
+        print(f"    📄 PDF detected by URL: {url}")
+        new_urls = self._process_pdf_breadth_first(url, current_depth, results, path)
+        return new_urls
       
       # Make request to check content type
       response = self.session.get(url, timeout=15)
       if response.status_code != 200:
-        print(f"❌ Failed to fetch {url}: Status code {response.status_code}")
-        return
+        print(f"    ❌ Failed to fetch {url}: Status code {response.status_code}")
+        return []
       
       # Check if this is actually a PDF based on content type or content
       content_type = response.headers.get('content-type', '').lower()
@@ -1043,20 +1083,18 @@ class WebCrawler:
                        (response.content and response.content.startswith(b'%PDF-')))
       
       if is_pdf_content and self.parse_pdfs:
-        print(f"🔍 PDF DETECTED BY CONTENT: {url}")
-        print(f"📄 Content-Type: {content_type}")
-        print(f"📄 Starting PDF scraping process...")
-        self._process_pdf_from_response(url, response, current_depth, results, path)
-        return
+        print(f"    📄 PDF detected by content: {url}")
+        new_urls = self._process_pdf_from_response_breadth_first(url, response, current_depth, results, path)
+        return new_urls
       elif is_pdf_content and not self.parse_pdfs:
-        print(f"📄 PDF detected but parsing disabled: {url}")
-        return
+        print(f"    📄 PDF detected but parsing disabled: {url}")
+        return []
       
       # Process as HTML
       soup = BeautifulSoup(response.text, 'html.parser')
       page_title = soup.title.string if soup.title else 'No Title'
       
-      print(f"✅ Successfully scraped: {page_title}")
+      print(f"    ✅ Successfully scraped: {page_title}")
       
       # Extract main content with filtering
       clean_text = self._extract_main_content(soup, url)
@@ -1066,17 +1104,17 @@ class WebCrawler:
       
       # Create page data (keep original URL for display purposes)
       page_data = {
-        'url': url,  # Keep original URL
+        'url': url,
         'title': page_title,
         'text': clean_text,
-        'content_links': content_links,  # Add extracted links
+        'content_links': content_links,
         'depth': current_depth,
         'content_type': 'html',
         'navigation_path': path.copy()
       }
       
-      # Cache the page (without depth and path since they can vary) - USE DEEP COPY
-      cache_data = copy.deepcopy(page_data)  # Use deepcopy instead of copy()
+      # Cache the page
+      cache_data = copy.deepcopy(page_data)
       cache_data['html'] = response.text  # Store HTML only in cache for link crawling
       del cache_data['depth']
       del cache_data['navigation_path']
@@ -1085,31 +1123,71 @@ class WebCrawler:
       # Store page data
       results.append(page_data)
       
-      # Only continue if we haven't reached max depth
+      # Extract URLs for next depth level
       if current_depth < max_depth:
         current_page_info = {'url': url, 'title': page_title}
-        self._crawl_links_from_soup(soup, url, current_depth, max_depth, results, path + [current_page_info])
+        new_urls = self._extract_urls_for_queue(soup, url, path + [current_page_info])
+      
+      return new_urls
                 
     except Exception as e:
-      print(f"❌ Error crawling {url}: {str(e)}")
+      print(f"    ❌ Error crawling {url}: {str(e)}")
+      return []
 
-  def _process_pdf(self, url: str, current_depth: int, results: List[Dict], path: List[Dict]):
-    """Process a PDF file."""
+  def _extract_urls_for_queue(self, soup: BeautifulSoup, url: str, path: List[Dict]) -> List[tuple]:
+    """Extract URLs from HTML and return them for adding to crawl queue."""
+    # Check if current page is external
+    parsed_current = urlparse(url)
+    current_domain = parsed_current.netloc.lower()
+    is_current_internal = self._is_internal_domain(current_domain)
+    
+    if not is_current_internal:
+      print(f"    🚫 On external domain {current_domain} - will not crawl any links from this page")
+      return []
+    
+    new_urls = []
+    links_found = 0
+    external_links_found = 0
+    
+    for link in soup.find_all('a', href=True):
+      next_url = urljoin(url, link['href'])
+      
+      # Check if this link is external
+      parsed_next = urlparse(next_url)
+      next_domain = parsed_next.netloc.lower()
+      is_next_internal = self._is_internal_domain(next_domain)
+      
+      # Add to queue if valid and not already visited
+      if self._should_crawl(next_url, url):
+        normalized_next_url = self._normalize_url(next_url)
+        if normalized_next_url not in self.visited_urls:
+          links_found += 1
+          if not is_next_internal:
+            external_links_found += 1
+            print(f"    🌍 Adding external link to queue: {next_url}")
+          
+          new_urls.append((next_url, path.copy()))
+    
+    print(f"    📊 Found {links_found} valid links to add to queue ({external_links_found} external)")
+    return new_urls
+
+  def _process_pdf_breadth_first(self, url: str, current_depth: int, results: List[Dict], path: List[Dict]) -> List[tuple]:
+    """Process a PDF file and return URLs found in it for the queue."""
     try:
-      print(f"📄 Processing PDF [Depth {current_depth}]: {url}")
+      print(f"    📄 Processing PDF: {url}")
       
       # Download PDF content
       response = self.session.get(url, timeout=30)
       if response.status_code != 200:
-        print(f"❌ Failed to download PDF {url}: Status code {response.status_code}")
-        return
+        print(f"    ❌ Failed to download PDF {url}: Status code {response.status_code}")
+        return []
       
       # Extract text from PDF
       pdf_text = self._extract_pdf_text(response.content)
       
       if not pdf_text:
-        print(f"⚠️  No text extracted from PDF: {url}")
-        return
+        print(f"    ⚠️  No text extracted from PDF: {url}")
+        return []
       
       # Clean and filter PDF text
       clean_pdf_text = self._clean_pdf_text(pdf_text, url)
@@ -1120,15 +1198,14 @@ class WebCrawler:
       # Get PDF title from URL or content
       pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
       
-      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
-      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
+      print(f"    ✅ Successfully extracted text from PDF: {pdf_title}")
       
       # Create page data for PDF
       page_data = {
         'url': url,
         'title': pdf_title,
         'text': clean_pdf_text,
-        'content_links': content_links,  # Now includes URLs found in PDF text
+        'content_links': content_links,
         'depth': current_depth,
         'content_type': 'pdf',
         'navigation_path': path.copy()
@@ -1144,26 +1221,24 @@ class WebCrawler:
       # Store PDF data
       results.append(page_data)
       
-      # Crawl URLs found in PDF content if not at max depth
-      if current_depth < max_depth and content_links:
-        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
-        current_page_info = {'url': url, 'title': pdf_title}
-        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
+      # Extract URLs from PDF content for queue
+      return self._extract_pdf_urls_for_queue(content_links, url, path)
       
     except Exception as e:
-      print(f"❌ Error processing PDF {url}: {str(e)}")
+      print(f"    ❌ Error processing PDF {url}: {str(e)}")
+      return []
 
-  def _process_pdf_from_response(self, url: str, response, current_depth: int, results: List[Dict], path: List[Dict]):
-    """Process a PDF file from an already downloaded response."""
+  def _process_pdf_from_response_breadth_first(self, url: str, response, current_depth: int, results: List[Dict], path: List[Dict]) -> List[tuple]:
+    """Process a PDF file from response and return URLs found in it for the queue."""
     try:
-      print(f"📄 Processing PDF from response [Depth {current_depth}]: {url}")
+      print(f"    📄 Processing PDF from response: {url}")
       
       # Extract text from PDF
       pdf_text = self._extract_pdf_text(response.content)
       
       if not pdf_text:
-        print(f"⚠️  No text extracted from PDF: {url}")
-        return
+        print(f"    ⚠️  No text extracted from PDF: {url}")
+        return []
       
       # Clean and filter PDF text
       clean_pdf_text = self._clean_pdf_text(pdf_text, url)
@@ -1174,15 +1249,14 @@ class WebCrawler:
       # Get PDF title from URL or content
       pdf_title = url.split('/')[-1].replace('.pdf', '') or 'PDF Document'
       
-      print(f"✅ Successfully extracted text from PDF: {pdf_title}")
-      print(f"📊 Extracted {len(clean_pdf_text)} characters from {url}")
+      print(f"    ✅ Successfully extracted text from PDF: {pdf_title}")
       
       # Create page data for PDF
       page_data = {
         'url': url,
         'title': pdf_title,
         'text': clean_pdf_text,
-        'content_links': content_links,  # Now includes URLs found in PDF text
+        'content_links': content_links,
         'depth': current_depth,
         'content_type': 'pdf',
         'navigation_path': path.copy()
@@ -1198,14 +1272,49 @@ class WebCrawler:
       # Store PDF data
       results.append(page_data)
       
-      # Crawl URLs found in PDF content if not at max depth
-      if current_depth < max_depth and content_links:
-        print(f"🔗 Found {len(content_links)} URLs in PDF content to potentially crawl")
-        current_page_info = {'url': url, 'title': pdf_title}
-        self._crawl_links_from_pdf(content_links, url, current_depth, max_depth, results, path + [current_page_info])
+      # Extract URLs from PDF content for queue
+      return self._extract_pdf_urls_for_queue(content_links, url, path)
       
     except Exception as e:
-      print(f"❌ Error processing PDF from response {url}: {str(e)}")
+      print(f"    ❌ Error processing PDF from response {url}: {str(e)}")
+      return []
+
+  def _extract_pdf_urls_for_queue(self, content_links: List[Dict], source_url: str, path: List[Dict]) -> List[tuple]:
+    """Extract URLs from PDF content and return them for adding to crawl queue."""
+    # Check if current PDF is from external domain
+    parsed_current = urlparse(source_url)
+    current_domain = parsed_current.netloc.lower()
+    is_current_internal = self._is_internal_domain(current_domain)
+    
+    if not is_current_internal:
+      print(f"    🚫 PDF is from external domain {current_domain} - will not crawl any URLs from this PDF")
+      return []
+    
+    new_urls = []
+    links_found = 0
+    external_links_found = 0
+    
+    for link_info in content_links:
+      next_url = link_info['url']
+      
+      # Check if this link is external
+      parsed_next = urlparse(next_url)
+      next_domain = parsed_next.netloc.lower()
+      is_next_internal = self._is_internal_domain(next_domain)
+      
+      # Add to queue if valid and not already visited
+      if self._should_crawl(next_url, source_url):
+        normalized_next_url = self._normalize_url(next_url)
+        if normalized_next_url not in self.visited_urls:
+          links_found += 1
+          if not is_next_internal:
+            external_links_found += 1
+            print(f"    🌍 Adding external link from PDF to queue: {next_url}")
+          
+          new_urls.append((next_url, path.copy()))
+    
+    print(f"    📊 Found {links_found} valid URLs in PDF to add to queue ({external_links_found} external)")
+    return new_urls
 
   def _remove_html_from_results(self, pages: List[Dict]) -> List[Dict]:
     """Remove HTML from all pages in results to prevent it from being returned."""
