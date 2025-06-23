@@ -420,7 +420,12 @@ class WebCrawler:
     return cleaned_text
 
   def _line_contains_url(self, line: str) -> bool:
-    """Check if a line contains what looks like a URL."""
+    """Check if a line contains what looks like a URL.
+    
+    Uses high-recall/lower-precision patterns to identify potential URLs.
+    We err on the side of keeping lines that might contain URLs, even if 
+    this means occasionally keeping some non-URL text. This is preferable
+    to accidentally removing valid URLs during PDF cleaning."""
     # Basic patterns to detect URLs in a line
     url_indicators = [
         r'https?://',
@@ -529,73 +534,6 @@ class WebCrawler:
         cleaned_text += " " + " ".join(missing_urls)
     
     return cleaned_text
-
-  def _is_likely_url(self, text: str) -> bool:
-    """Check if text is likely a real URL vs a false positive - IMPROVED VERSION."""
-    # Skip obvious version numbers
-    if re.match(r'^\d+\.\d+(\.\d+)*$', text):  # Version numbers like "1.0" or "1.0.1"
-        return False
-    
-    # Skip very short domain-like strings that are likely not URLs
-    if re.match(r'^\w+\.\w+$', text) and len(text) < 6:  # Reduced from 8 to 6
-        return False
-    
-    # ALLOW file extensions with paths - this was the main issue!
-    if '.pdf' in text.lower() or '.html' in text.lower() or '.htm' in text.lower():
-        return True
-    
-    # Allow common domains
-    if any(domain in text.lower() for domain in ['.gov', '.org', '.edu', '.com', '.net']):
-        return True
-    
-    # Skip standalone file extensions without meaningful content
-    if re.match(r'^\w+\.(jpg|png|gif|doc|docx|txt|csv)$', text, re.IGNORECASE):
-        return False
-    
-    return True
-
-  def _crawl_links_from_soup(self, soup: BeautifulSoup, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict]):
-    """Extract and crawl links from a BeautifulSoup object."""
-    print(f"🔗 Looking for links on: {url}")
-    
-    # Check if current page is external
-    parsed_current = urlparse(url)
-    current_domain = parsed_current.netloc.lower()
-    is_current_internal = self._is_internal_domain(current_domain)
-    
-    if not is_current_internal:
-        print(f"🚫 On external domain {current_domain} - will not crawl any links from this page")
-        return
-    
-    # Find all links
-    links_found = 0
-    external_links_found = 0
-    
-    for link in soup.find_all('a', href=True):
-        next_url = urljoin(url, link['href'])
-        
-        # Check if this link is external
-        parsed_next = urlparse(next_url)
-        next_domain = parsed_next.netloc.lower()
-        is_next_internal = self._is_internal_domain(next_domain)
-        
-        # Recursively crawl each valid link
-        if self._should_crawl(next_url, url):  # Pass current URL for context
-            links_found += 1
-            if not is_next_internal:
-                external_links_found += 1
-                print(f"🌍 Following external link: {next_url}")
-            
-            self._crawl_recursive(
-                next_url, 
-                current_depth + 1, 
-                max_depth, 
-                results,
-                path,  # Pass the current path
-                url    # Pass current URL as parent_url
-            )
-    
-    print(f"📊 Found {links_found} valid links to crawl from {url} ({external_links_found} external)")
 
   def get_cache_info(self) -> Dict:
       """
@@ -1013,6 +951,14 @@ class WebCrawler:
       print(f"✅ Completed depth {current_depth}: processed {depth_urls_processed} URLs")
     
     print(f"🏁 Breadth-first crawling completed! Total pages: {len(results)}")
+    # Return list of crawled pages, each containing:
+    # - url: str - The page URL
+    # - title: str - Page title
+    # - text: str - Extracted text content
+    # - content_links: List[Dict] - Links found in content
+    # - depth: int - Crawl depth
+    # - content_type: str - 'html' or 'pdf'
+    # - navigation_path: List[Dict] - Path taken to reach this page
     return results
 
   def _process_url_breadth_first(self, url: str, current_depth: int, max_depth: int, results: List[Dict], path: List[Dict], parent_url: str = None) -> List[tuple]:
@@ -1316,11 +1262,22 @@ class WebCrawler:
     print(f"    📊 Found {links_found} valid URLs in PDF to add to queue ({external_links_found} external)")
     return new_urls
 
-  def _remove_html_from_results(self, pages: List[Dict]) -> List[Dict]:
-    """Remove HTML from all pages in results to prevent it from being returned."""
+  def _remove_html_from_results(self, pages: List[Dict[str, any]]) -> List[Dict[str, any]]:
+    """Remove HTML from all pages in results to prevent it from being returned.
+    
+    Each page dict contains:
+    - url: str - The page URL
+    - title: str - Page title
+    - text: str - Extracted text content
+    - html: str - Raw HTML content (this key will be removed)
+    - content_links: List[Dict] - Links found in content
+    - depth: int - Crawl depth
+    - content_type: str - 'html' or 'pdf'
+    - navigation_path: List[Dict] - Path taken to reach this page
+    """
     cleaned_pages = []
     for page in pages:
-      # Create a copy of the page without HTML
+      # Create a copy of the page dict without the 'html' key to avoid returning raw HTML
       cleaned_page = {k: v for k, v in page.items() if k != 'html'}
       cleaned_pages.append(cleaned_page)
     return cleaned_pages
