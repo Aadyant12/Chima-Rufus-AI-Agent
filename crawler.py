@@ -112,27 +112,77 @@ class WebCrawler:
     parsed_url = urlparse(url)
     return parsed_url.path.lower().endswith('.pdf')
 
-  def _extract_text_with_structure(self, element) -> str:
+  def _extract_main_content(self, soup: BeautifulSoup, url: str) -> str:
     """
-    Improved HTML-to-text conversion:
-    - Inserts blank lines between <p>, <li>, and heading tags.
-    - Preserves structure for better chunking.
+    Extract main content from HTML, filtering out headers, footers, navigation, ads, etc.
     """
-    block_tags = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-    blocks = []
-    for tag in element.find_all(block_tags, recursive=True):
-        text = tag.get_text(separator=' ', strip=True)
-        if text:
-            blocks.append(text)
-    if blocks:
-        return '\n\n'.join(blocks)
-    # Fallback: original method
-    raw = element.get_text(separator='\n')
-    raw = raw.replace('\r\n', '\n').replace('\r', '\n')
-    raw = re.sub(r'\n+', '\n', raw)
-    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in raw.split('\n')]
-    non_empty_lines = [line for line in lines if line]
-    return '\n\n'.join(non_empty_lines)
+    print(f"🧹 Filtering HTML content for: {url}")
+    
+    # Check if this is a United Spinal site that needs special handling
+    if self._is_united_spinal_site(url):
+        print(f"🏥 Detected United Spinal site - using specialized content extraction")
+        return self._extract_united_spinal_content(soup, url)
+    
+    # Strategy 1: Remove unwanted elements by tag and class/id patterns
+    unwanted_selectors = [
+        # Navigation elements
+        'nav', 'header', 'footer', '.nav', '.navigation', '.navbar', 
+        '#navigation', '#nav', '.menu', '.main-menu',
+        
+        # Ads and promotional content
+        '.ad', '.ads', '.advertisement', '.promo', '.promotion', 
+        '.banner', '.sidebar-ads', '[class*="ad-"]', '[id*="ad-"]',
+        '.google-ad', '.adsense', '.adsbygoogle',
+        
+        # Social media and sharing
+        '.social', '.share', '.sharing', '.social-media', '.social-share',
+        '.twitter', '.facebook', '.linkedin', '.instagram',
+        
+        # Comments sections (optional - remove if you want comments)
+        '.comments', '.comment', '.user-comments', '#comments',
+        
+        # Other common non-content elements
+        '.sidebar', '.side-bar', '.widget', '.widgets',
+        '.breadcrumb', '.breadcrumbs', '.pagination',
+        '.newsletter', '.subscription', '.subscribe',
+        '.popup', '.modal', '.overlay',
+        '.cookie', '.cookie-notice', '.cookie-banner',
+        
+        # Generic utility classes
+        '.hidden', '.hide', '.invisible', '[style*="display:none"]',
+        '.sr-only', '.screen-reader-text'
+    ]
+    
+    # Remove unwanted elements
+    removed_count = 0
+    for selector in unwanted_selectors:
+        elements = soup.select(selector)
+        for element in elements:
+            element.decompose()  # Completely remove from DOM
+            removed_count += 1
+    
+    print(f"🗑️  Removed {removed_count} unwanted HTML elements")
+    
+    # Strategy 2: Try to identify main content area
+    main_content = self._find_main_content_area(soup, url)
+    
+    if main_content:
+        print(f"✅ Found main content area")
+        content_text = main_content.get_text(separator=' ', strip=True)
+    else:
+        print(f"⚠️  No main content area found, using body")
+        # Fallback: use body but with additional filtering
+        body = soup.find('body')
+        if body:
+            content_text = body.get_text(separator=' ', strip=True)
+        else:
+            content_text = soup.get_text(separator=' ', strip=True)
+    
+    # Strategy 3: Clean up the extracted text
+    content_text = self._clean_extracted_text(content_text)
+    
+    print(f"📏 Final HTML content length: {len(content_text)} characters")
+    return content_text
 
   def _is_united_spinal_site(self, url: str) -> bool:
     """Check if the URL is from a United Spinal site that needs special handling."""
@@ -141,93 +191,47 @@ class WebCrawler:
     return 'unitedspinal.org' in domain
 
   def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Extract content from United Spinal sites using the universal method."""
+    """Extract content specifically from United Spinal sites."""
     print(f"🏥 Extracting United Spinal content from: {url}")
     
-    # Remove helper elements
-    for element in soup.select('div.helpful, script, style'):
-        element.decompose()
+    # First, remove any <div class="helpful"> elements
+    helpful_elements = soup.select('div.helpful')
+    if helpful_elements:
+        print(f"🗑️  Removing {len(helpful_elements)} 'helpful' div elements")
+        for element in helpful_elements:
+            element.decompose()
     
-    # Find content div or fallback to body
+    # Look for the specific content div
     content_element = soup.select_one('div#content2col')
-    if not content_element:
-        content_element = soup.find('body')
-    if not content_element:
-        content_element = soup
     
-    print(f"🎯 Using content element: {getattr(content_element, 'name', 'soup')}")
-    
-    # Use the universal extraction method
-    content_text = self._extract_text_with_structure(content_element)
-    
-    # Apply standard cleaning
-    content_text = self._clean_extracted_text_preserve_structure(content_text)
-    
-    print(f"📏 Final content length: {len(content_text)} characters")
-    
-    # Debug output - show paragraph structure
-    paragraphs = content_text.split('\n\n')
-    print(f"📝 Extracted {len(paragraphs)} paragraphs")
-    for i, para in enumerate(paragraphs[:5]):  # Show first 5 paragraphs
-        preview = para.replace('\n', ' ')[:100]
-        print(f"  Para {i+1}: {preview}{'...' if len(preview) >= 100 else ''}")
-    
-    return content_text
-
-  def _force_organization_breaks(self, text: str) -> str:
-    """
-    BRUTE FORCE: Add paragraph breaks before organization names.
-    Look for specific patterns and force breaks.
-    """
-    # Common organization name patterns from the United Spinal example
-    org_names = [
-        'Ability Foundation',
-        'All India Institute Of Physical Medicine',
-        'Amar Jyoti Charitable Trust',
-        'Association for People with Disability',
-        'Association of Spine Surgeons of India',
-        'Community Outreach Programme',
-        'Helping Hand India',
-        'Indian Spinal Injuries Centre',
-        'Institute for the Physically Handicapped',
-        'Mobility India',
-        'National Centre for Promotion of Employment',
-        'Pain & Stroke Rehab Center',
-        'Samarthanam Trust for the Disabled',
-        'Spinal Cord Society of West Bengal',
-        'Spinal Injured Persons Association'
-    ]
-    
-    # Add breaks before each organization name
-    for org in org_names:
-        # Use regex to add paragraph break before org name if it's not already there
-        pattern = f'([a-z.])\s*({re.escape(org)})'
-        replacement = r'\1\n\n\2'
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    
-    # Also add breaks before any text that looks like org names
-    # Pattern: Word(s) + (Foundation|Institute|Trust|etc.)
-    org_pattern = r'([a-z.])\s*([A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO))\b'
-    text = re.sub(org_pattern, r'\1\n\n\2', text)
-    
-    return text
+    if content_element:
+        print(f"🎯 Found United Spinal content in #content2col")
+        content_text = content_element.get_text(separator=' ', strip=True)
+        print(f"📏 United Spinal content length: {len(content_text)} characters")
+        
+        # Clean the extracted text
+        content_text = self._clean_extracted_text(content_text)
+        return content_text
+    else:
+        print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
+        # Fall back to standard content extraction
+        return self._extract_standard_content(soup, url)
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Updated standard content extraction with better paragraph handling."""
+    """Standard content extraction logic (original behavior)."""
     main_content = self._find_main_content_area(soup, url)
     
     if main_content:
-        content_text = self._extract_text_with_structure(main_content)
+        content_text = main_content.get_text(separator=' ', strip=True)
     else:
         # Fallback: use body
         body = soup.find('body')
         if body:
-            content_text = self._extract_text_with_structure(body)
+            content_text = body.get_text(separator=' ', strip=True)
         else:
-            content_text = self._extract_text_with_structure(soup)
+            content_text = soup.get_text(separator=' ', strip=True)
     
-    # Only this cleaner!
-    return self._clean_extracted_text_preserve_structure(content_text)
+    return self._clean_extracted_text(content_text)
 
   def _find_main_content_area(self, soup, url: str = None):
     """
@@ -337,7 +341,7 @@ class WebCrawler:
 
   def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
     """
-    Clean and filter PDF text content while preserving paragraph structure.
+    Clean and filter PDF text content to remove headers, footers, page numbers, etc.
     """
     print(f"🧹 Filtering PDF content for: {url}")
     
@@ -373,40 +377,41 @@ class WebCrawler:
     
     removed_lines = 0
     for line in lines:
-        line_stripped = line.strip()
+        line = line.strip()
         
+        # Skip empty lines
+        if not line:
+            continue
+            
         # Check if line contains URLs - if so, ALWAYS keep it
-        if self._line_contains_url(line_stripped):
-            cleaned_lines.append(line_stripped)
+        if self._line_contains_url(line):
+            cleaned_lines.append(line)
             continue
             
         # Check if line matches any artifact pattern
         is_artifact = False
         for pattern in pdf_artifacts:
-            if re.match(pattern, line_stripped, re.IGNORECASE):
+            if re.match(pattern, line, re.IGNORECASE):
                 is_artifact = True
                 removed_lines += 1
                 break
         
         # Only skip very short lines that don't contain URLs or meaningful punctuation
-        if len(line_stripped) < 3 and not any(punct in line_stripped for punct in ['.', '!', '?', ':', '/', '@']):
+        if len(line) < 3 and not any(punct in line for punct in ['.', '!', '?', ':', '/', '@']):
             is_artifact = True
             removed_lines += 1
         
         if not is_artifact:
-            cleaned_lines.append(line_stripped)
-        elif not line_stripped:
-            # Keep empty lines for paragraph structure
-            cleaned_lines.append('')
+            cleaned_lines.append(line)
     
     print(f"🗑️  Removed {removed_lines} PDF artifact lines")
     
-    # Rejoin lines preserving paragraph structure
-    cleaned_text = '\n'.join(cleaned_lines)
+    # Rejoin lines
+    cleaned_text = ' '.join(cleaned_lines)
     print(f"🔍 Cleaned text length: {len(cleaned_text)} characters")
     
-    # Apply general text cleaning - but preserve URLs and structure
-    cleaned_text = self._clean_extracted_text_preserve_urls_and_structure(cleaned_text)
+    # Apply general text cleaning - but preserve URLs
+    cleaned_text = self._clean_extracted_text_preserve_urls(cleaned_text)
     
     # Re-inject URLs that were found in raw text if they're not already present
     cleaned_text = self._preserve_urls_in_cleaned_text_improved(cleaned_text, raw_urls)
@@ -438,26 +443,12 @@ class WebCrawler:
             return True
     return False
 
-  def _clean_extracted_text_preserve_urls_and_structure(self, text: str) -> str:
+  def _clean_extracted_text_preserve_urls(self, text: str) -> str:
     """
-    Clean and normalize the extracted text content while preserving URLs and paragraph structure.
+    Clean and normalize the extracted text content while preserving URLs.
     """
-    # First normalize line endings
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    
-    # Remove excessive blank lines (more than 2 consecutive newlines)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    # Normalize spaces within lines (but preserve newlines)
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    for line in lines:
-        # Remove excessive spaces within each line
-        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
-        cleaned_lines.append(cleaned_line)
-    
-    text = '\n'.join(cleaned_lines)
+    # Remove excessive whitespace but preserve URLs
+    text = re.sub(r'\s+', ' ', text)
     
     # Remove common navigational text patterns - but be careful not to remove URLs
     nav_patterns = [
@@ -476,9 +467,8 @@ class WebCrawler:
     for pattern in nav_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Clean up any resulting empty lines or excessive whitespace
-    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)  # Max 2 consecutive newlines
-    text = text.strip()
+    # Final cleanup
+    text = re.sub(r'\s+', ' ', text).strip()
     
     return text
 
@@ -1053,7 +1043,7 @@ class WebCrawler:
       print(f"    ✅ Successfully scraped: {page_title}")
       
       # Extract main content with filtering
-      clean_text = self._extract_standard_content(soup, url)
+      clean_text = self._extract_main_content(soup, url)
       
       # Extract links from main content area
       content_links = self._extract_content_links(soup, url)
@@ -1291,12 +1281,3 @@ class WebCrawler:
       cleaned_page = {k: v for k, v in page.items() if k != 'html'}
       cleaned_pages.append(cleaned_page)
     return cleaned_pages
-
-  def _clean_extracted_text_preserve_structure(self, text: str) -> str:
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    lines = text.split('\n')
-    cleaned_lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in lines]
-    text = '\n'.join(cleaned_lines)
-    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
-    return text.strip()
