@@ -89,261 +89,30 @@ class WebCrawler:
     return hashlib.md5(normalized_url.encode()).hexdigest()
 
   def _extract_pdf_text(self, pdf_content: bytes) -> str:
-    """
-    Enhanced PDF text extraction that preserves and reconstructs paragraph structure
-    for optimal compatibility with RecursiveTextSplitter.
-    """
+    """Extract text from PDF content with better page separation."""
     if not PDF_PARSING_AVAILABLE:
-      return ""
+        return ""
     
     try:
-      pdf_file = io.BytesIO(pdf_content)
-      pdf_reader = PyPDF2.PdfReader(pdf_file)
-      
-      text = ""
-      for page_num in range(len(pdf_reader.pages)):
-        page = pdf_reader.pages[page_num]
-        page_text = page.extract_text()
+        pdf_file = io.BytesIO(pdf_content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
         
-        # Add page break with extra spacing to ensure proper separation
-        if page_num > 0:
-          text += "\n\n"  # Page break with paragraph separation
+        text = ""
+        for page_num in range(len(pdf_reader.pages)):
+            page = pdf_reader.pages[page_num]
+            page_text = page.extract_text()
+            
+            if page_text.strip():  # Only add non-empty pages
+                text += page_text.strip()
+                
+                # Add page break (double newline) between pages for better paragraph structure
+                if page_num < len(pdf_reader.pages) - 1:  # Don't add after last page
+                    text += "\n\n"
         
-        text += page_text
-      
-      # Apply PDF-specific paragraph reconstruction
-      text = self._reconstruct_pdf_paragraphs(text)
-      
-      return text.strip()
+        return text
     except Exception as e:
-      print(f"❌ Error extracting PDF text: {str(e)}")
-      return ""
-
-  def _reconstruct_pdf_paragraphs(self, pdf_text: str) -> str:
-    """
-    Reconstruct paragraph structure from PDF text extraction.
-    
-    PDFs often have inconsistent line breaks where:
-    - Single lines might be separate paragraphs
-    - Multi-line paragraphs get split incorrectly
-    - Inconsistent spacing between sections
-    
-    This method attempts to reconstruct logical paragraph structure.
-    """
-    print("🔧 Reconstructing PDF paragraph structure...")
-    
-    # Normalize line endings first
-    text = pdf_text.replace('\r\n', '\n').replace('\r', '\n')
-    
-    lines = text.split('\n')
-    reconstructed_lines = []
-    i = 0
-    
-    while i < len(lines):
-        current_line = lines[i].strip()
-        
-        # Skip empty lines - they'll be handled in final processing
-        if not current_line:
-            reconstructed_lines.append('')
-            i += 1
-            continue
-        
-        # Check if this line should start a new paragraph
-        starts_new_paragraph = self._pdf_line_starts_paragraph(current_line, lines, i)
-        
-        if starts_new_paragraph and reconstructed_lines and reconstructed_lines[-1]:
-            # Add paragraph break before this line
-            reconstructed_lines.append('')  # Empty line for paragraph break
-        
-        # Add the current line
-        reconstructed_lines.append(current_line)
-        i += 1
-    
-    # Join lines and apply final paragraph structuring
-    text = '\n'.join(reconstructed_lines)
-    
-    # Convert single newlines followed by paragraph indicators to double newlines
-    text = self._enhance_pdf_paragraph_breaks(text)
-    
-    print(f"✅ PDF paragraph reconstruction complete")
-    return text
-
-  def _pdf_line_starts_paragraph(self, line: str, all_lines: List[str], line_index: int) -> bool:
-    """
-    Determine if a line should start a new paragraph in PDF text.
-    
-    Heuristics:
-    - Lines that look like headings (short, capitalized)
-    - Lines that start common paragraph starters
-    - Lines after blank lines (already paragraphs)
-    - Numbered or bulleted lists
-    """
-    if not line.strip():
-        return False
-    
-    # Get previous non-empty line for context
-    prev_line = ""
-    for j in range(line_index - 1, -1, -1):
-        if all_lines[j].strip():
-            prev_line = all_lines[j].strip()
-            break
-    
-    # Always start paragraph if previous line is empty (already handled above)
-    if not prev_line:
-        return True
-    
-    # Check for common paragraph starters
-    paragraph_starters = [
-        r'^\d+\.',  # Numbered lists: "1. ", "2. "
-        r'^[•·▪▫‣⁃]\s',  # Bullet points
-        r'^[A-Z][A-Z\s]{2,}:',  # ALL CAPS headings with colon
-        r'^[A-Z][a-z]+:',  # Title case headings with colon
-        r'^(The|This|In|On|At|For|With|By|From|To|Of|An?)\s+[A-Z]',  # Common sentence starters
-        r'^(However|Therefore|Furthermore|Moreover|Additionally|Meanwhile)\s',  # Transition words
-    ]
-    
-    for pattern in paragraph_starters:
-        if re.match(pattern, line):
-            return True
-    
-    # Check if line looks like a heading (short, mostly capitals, no ending punctuation)
-    if (len(line) < 60 and 
-        not line.endswith(('.', ',', ';')) and
-        sum(1 for c in line if c.isupper()) / len(line) > 0.3):
-        return True
-    
-    # Check if previous line is much shorter (might be end of paragraph)
-    if len(prev_line) < 40 and len(line) > 60:
-        return True
-    
-    return False
-
-  def _enhance_pdf_paragraph_breaks(self, text: str) -> str:
-    """
-    Add strategic paragraph breaks in PDF text based on content patterns.
-    """
-    # Handle common paragraph break indicators
-    patterns_and_replacements = [
-        # Add breaks before numbered sections
-        (r'(\w)\s*(\d+\.\s+[A-Z])', r'\1\n\n\2'),
-        
-        # Add breaks before bullet points  
-        (r'(\w)\s*([•·▪▫‣⁃]\s)', r'\1\n\n\2'),
-        
-        # Add breaks before ALL CAPS headings
-        (r'(\w)\s*([A-Z][A-Z\s]{3,}:)', r'\1\n\n\2'),
-        
-        # Add breaks after colons that end lines (likely section headers)
-        (r'([A-Za-z]:)\s*([A-Z])', r'\1\n\n\2'),
-        
-        # Add breaks before common section starters
-        (r'(\w)\s*((?:Introduction|Background|Methods?|Results?|Discussion|Conclusion|Summary|References?|Appendix)[:\s])', r'\1\n\n\2'),
-        
-        # Add breaks before transition words at start of what should be new paragraphs
-        (r'(\.)(\s*(?:However|Therefore|Furthermore|Moreover|Additionally|Meanwhile|In addition|On the other hand)\s)', r'\1\n\n\2'),
-    ]
-    
-    for pattern, replacement in patterns_and_replacements:
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    
-    return text
-
-  def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
-    """
-    Enhanced PDF text cleaning that preserves and enhances paragraph structure 
-    for RecursiveTextSplitter.
-    """
-    print(f"🧹 Filtering PDF content for: {url}")
-    
-    # Extract URLs before cleaning
-    raw_urls = self._extract_urls_from_raw_text_improved(pdf_text)
-    print(f"🔍 Found {len(raw_urls)} raw URLs before cleaning")
-    
-    # Split into lines for processing
-    lines = pdf_text.split('\n')
-    cleaned_lines = []
-    
-    # PDF artifacts to remove - be conservative to preserve content
-    pdf_artifacts = [
-        r'^\s*\d+\s*$',                    # Standalone page numbers
-        r'^\s*Page\s+\d+\s*$',             # "Page 1"
-        r'^\s*\d+\s+of\s+\d+\s*$',         # "1 of 10"
-        r'^\s*-\s*\d+\s*-\s*$',            # "- 1 -"
-        r'^\s*©.*\d{4}\s*$',               # Copyright lines
-        r'^\s*Copyright.*\d{4}\s*$',       # Copyright lines
-        r'^\s*All rights reserved\s*$',     # Rights statements
-        r'^\s*Confidential\s*$',           # Confidential headers
-        r'^\s*DRAFT\s*$',                  # Draft headers
-    ]
-    
-    removed_lines = 0
-    for line in lines:
-        line_stripped = line.strip()
-        
-        # Always keep lines with URLs
-        if self._line_contains_url(line_stripped):
-            cleaned_lines.append(line_stripped)
-            continue
-        
-        # Check for PDF artifacts
-        is_artifact = False
-        for pattern in pdf_artifacts:
-            if re.match(pattern, line_stripped, re.IGNORECASE):
-                is_artifact = True
-                removed_lines += 1
-                break
-        
-        # Skip very short lines without meaningful content, but preserve structure
-        if (len(line_stripped) < 3 and 
-            not any(punct in line_stripped for punct in ['.', '!', '?', ':', '/', '@']) and
-            line_stripped):  # Only skip non-empty short lines
-            is_artifact = True
-            removed_lines += 1
-        
-        if not is_artifact:
-            cleaned_lines.append(line_stripped)
-        elif not line_stripped:  # Always keep empty lines for paragraph structure
-            cleaned_lines.append('')
-    
-    print(f"🗑️  Removed {removed_lines} PDF artifact lines")
-    
-    # Rejoin and apply structure-preserving cleaning
-    text = '\n'.join(cleaned_lines)
-    
-    # Apply the same structure preservation as HTML content
-    text = self._clean_extracted_text_preserve_structure(text)
-    
-    # Re-inject any URLs that were lost during cleaning
-    text = self._preserve_urls_in_cleaned_text_improved(text, raw_urls)
-    
-    # Final PDF-specific enhancements for paragraph structure
-    text = self._finalize_pdf_paragraph_structure(text)
-    
-    print(f"📏 Final PDF content length: {len(text)} characters")
-    return text
-
-  def _finalize_pdf_paragraph_structure(self, text: str) -> str:
-    """
-    Final enhancements to PDF paragraph structure for optimal RecursiveTextSplitter compatibility.
-    """
-    # Ensure consistent double newlines between logical paragraphs
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Normalize multiple newlines to double
-    
-    # Add paragraph breaks before obvious section headers that might have been missed
-    section_headers = [
-        r'\b(Abstract|Introduction|Background|Literature Review|Methodology|Methods|Results|Discussion|Conclusion|Summary|References|Bibliography|Appendix|Acknowledgments)\b',
-        r'\b(Executive Summary|Overview|Objectives|Scope|Findings|Recommendations|Next Steps|Action Items)\b'
-    ]
-    
-    for header_pattern in section_headers:
-        # Add paragraph break before section headers if not already there
-        text = re.sub(f'([a-z.])\s*({header_pattern})', r'\1\n\n\2', text, flags=re.IGNORECASE)
-    
-    # Ensure proper spacing around numbered/bulleted lists
-    text = re.sub(r'([a-z.])\s*(\n[•·▪▫‣⁃])', r'\1\n\n\2', text)  # Before bullets
-    text = re.sub(r'([a-z.])\s*(\n\d+\.)', r'\1\n\n\2', text)     # Before numbered lists
-    
-    return text.strip()
+        print(f"❌ Error extracting PDF text: {str(e)}")
+        return ""
 
   def _is_pdf_url(self, url: str) -> bool:
     """Check if URL points to a PDF file."""
@@ -539,6 +308,274 @@ class WebCrawler:
     """Remove text that appears multiple times (likely headers/footers)."""
     # This method was missing - adding it to prevent errors
     return text
+
+  def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
+    """
+    Enhanced PDF text cleaning that preserves structure for RecursiveTextSplitter.
+    """
+    print(f"🧹 Filtering PDF content for: {url}")
+    print(f"📊 Original PDF text length: {len(pdf_text)} characters")
+    
+    # Extract URLs before cleaning
+    raw_urls = self._extract_urls_from_raw_text_improved(pdf_text)
+    print(f"🔍 Found {len(raw_urls)} raw URLs before cleaning")
+    
+    # Show original line count for debugging
+    original_lines = pdf_text.split('\n')
+    print(f"📄 Original PDF has {len(original_lines)} lines")
+    
+    # Split into lines for processing
+    lines = pdf_text.split('\n')
+    cleaned_lines = []
+    
+    # PDF artifacts to remove - be conservative to preserve content
+    pdf_artifacts = [
+        r'^\s*\d+\s*$',                    # Standalone page numbers
+        r'^\s*Page\s+\d+\s*$',             # "Page 1"
+        r'^\s*\d+\s+of\s+\d+\s*$',         # "1 of 10"
+        r'^\s*-\s*\d+\s*-\s*$',            # "- 1 -"
+        r'^\s*©.*\d{4}\s*$',               # Copyright lines
+        r'^\s*Copyright.*\d{4}\s*$',       # Copyright lines
+        r'^\s*All rights reserved\s*$',     # Rights statements
+    ]
+    
+    removed_lines = 0
+    for line in lines:
+        line_stripped = line.strip()
+        
+        # Always keep lines with URLs
+        if self._line_contains_url(line_stripped):
+            cleaned_lines.append(line_stripped)
+            continue
+        
+        # Check for PDF artifacts
+        is_artifact = False
+        for pattern in pdf_artifacts:
+            if re.match(pattern, line_stripped, re.IGNORECASE):
+                is_artifact = True
+                removed_lines += 1
+                break
+        
+        # Skip very short lines without meaningful content
+        if (len(line_stripped) < 3 and 
+            not any(punct in line_stripped for punct in ['.', '!', '?', ':', '/', '@'])):
+            is_artifact = True
+            removed_lines += 1
+        
+        if not is_artifact:
+            cleaned_lines.append(line_stripped)
+        elif not line_stripped:  # Keep empty lines for structure
+            cleaned_lines.append('')
+    
+    print(f"🗑️  Removed {removed_lines} PDF artifact lines")
+    print(f"📄 After artifact removal: {len(cleaned_lines)} lines")
+    
+    # Rejoin lines
+    text = '\n'.join(cleaned_lines)
+    
+    # PDF-specific paragraph detection and enhancement
+    print(f"🔧 Starting PDF paragraph enhancement...")
+    text = self._enhance_pdf_paragraph_structure(text)
+    
+    # Apply structure-preserving cleaning (but be more gentle with PDFs)
+    text = self._clean_pdf_text_preserve_structure(text)
+    
+    # Re-inject any URLs that were lost during cleaning
+    text = self._preserve_urls_in_cleaned_text_improved(text, raw_urls)
+    
+    print(f"📏 Final PDF content length: {len(text)} characters")
+    
+    # Debug: Show final paragraph structure
+    final_paragraphs = text.split('\n\n')
+    print(f"📝 Final PDF has {len(final_paragraphs)} paragraphs")
+    for i, para in enumerate(final_paragraphs[:3]):  # Show first 3 paragraphs
+        preview = para.replace('\n', ' ')[:100]
+        print(f"  PDF Para {i+1}: {preview}{'...' if len(preview) >= 100 else ''}")
+    
+    return text
+
+  def _enhance_pdf_paragraph_structure(self, text: str) -> str:
+    """
+    Enhance paragraph structure specifically for PDF text.
+    PDFs often have irregular line breaks that need special handling.
+    """
+    print("🔧 Enhancing PDF paragraph structure...")
+    
+    # Split into lines for processing
+    lines = text.split('\n')
+    enhanced_lines = []
+    
+    paragraph_breaks_added = 0
+    
+    for i, line in enumerate(lines):
+        current_line = line.strip()
+        
+        # Skip empty lines - they're already paragraph breaks
+        if not current_line:
+            enhanced_lines.append('')
+            continue
+        
+        # Check if this line should start a new paragraph
+        should_break = False
+        
+        # 1. Lines that start with capital letters after a sentence-ending line
+        if i > 0:
+            prev_line = lines[i-1].strip()
+            if (prev_line and 
+                prev_line.endswith(('.', '!', '?', ':')) and 
+                current_line and 
+                len(current_line) > 0 and
+                current_line[0].isupper() and 
+                len(current_line) > 5):  # Reduced threshold from 10 to 5
+                should_break = True
+                print(f"  📝 Sentence break detected: '{prev_line[-20:]}' → '{current_line[:30]}'")
+        
+        # 2. Lines that look like headings (more permissive)
+        if (len(current_line) < 150 and  # Increased from 100
+            current_line.count(' ') < 12 and  # Increased from 8
+            current_line and current_line[0].isupper() and
+            not current_line.endswith(('.', '!', '?', ',', ';')) and
+            len(current_line) > 3):  # Minimum length
+            # Check if it's not a continuation of a sentence
+            if i > 0:
+                prev_line = lines[i-1].strip()
+                if not (prev_line and prev_line.endswith((',', ';', 'and', 'or', 'but', 'the', 'of', 'in', 'on', 'at', 'to', 'for'))):
+                    should_break = True
+                    print(f"  📋 Heading detected: '{current_line[:50]}'")
+        
+        # 3. Lines that start with bullet points or numbers (more patterns)
+        if (re.match(r'^\s*[•\-\*]\s+', current_line) or 
+            re.match(r'^\s*\d+[\.\)]\s+', current_line) or
+            re.match(r'^\s*[a-zA-Z][\.\)]\s+', current_line) or  # a. b. c.
+            re.match(r'^\s*[ivxlcdm]+[\.\)]\s+', current_line, re.IGNORECASE)):  # roman numerals
+            should_break = True
+            print(f"  📋 List item detected: '{current_line[:50]}'")
+        
+        # 4. Lines that start with organization/location names (more comprehensive)
+        org_pattern = r'^[A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO|Inc|LLC|Corp|University|College|School|Department|Ministry|Agency|Service|Program|Project|Initiative|Group|Team|Committee|Council|Board|Office)\b'
+        if re.match(org_pattern, current_line):
+            should_break = True
+            print(f"  🏢 Organization detected: '{current_line[:50]}'")
+        
+        # 5. Lines that start with location indicators (more comprehensive)
+        location_pattern = r'^[A-Z][^.]*(?:Street|Road|Avenue|Drive|Lane|Boulevard|Plaza|Square|Park|City|State|Province|Country|Address|Location|Phone|Tel|Email|Website|Contact|Office)\b'
+        if re.match(location_pattern, current_line):
+            should_break = True
+            print(f"  📍 Location detected: '{current_line[:50]}'")
+        
+        # 6. Lines that start with common section indicators
+        section_patterns = [
+            r'^(?:Description|Overview|Summary|Introduction|Background|Purpose|Mission|Vision|Goals|Objectives|Services|Programs|Contact|About|History|Staff|Team|Board|Directors|Management)[:.]?\s*',
+            r'^(?:Address|Phone|Email|Website|Hours|Schedule|Fees|Cost|Price|Registration|Enrollment|Application|Requirements|Eligibility)[:.]?\s*',
+            r'^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)',  # Days of week
+            r'^(?:January|February|March|April|May|June|July|August|September|October|November|December)',  # Months
+        ]
+        
+        for pattern in section_patterns:
+            if re.match(pattern, current_line, re.IGNORECASE):
+                should_break = True
+                print(f"  📋 Section indicator detected: '{current_line[:50]}'")
+                break
+        
+        # 7. Lines with significant formatting changes (all caps, mixed case after lowercase)
+        if (len(current_line) > 5 and 
+            current_line.isupper() and 
+            i > 0 and lines[i-1].strip() and 
+            not lines[i-1].strip().isupper()):
+            should_break = True
+            print(f"  📢 ALL CAPS detected: '{current_line[:50]}'")
+        
+        # Add paragraph break if needed
+        if should_break and enhanced_lines and enhanced_lines[-1]:  # Don't add multiple breaks
+            enhanced_lines.append('')  # Add blank line for paragraph break
+            paragraph_breaks_added += 1
+        
+        enhanced_lines.append(current_line)
+    
+    # Rejoin and return
+    enhanced_text = '\n'.join(enhanced_lines)
+    
+    # Count paragraph breaks added
+    original_line_count = len([line for line in lines if line.strip()])
+    enhanced_paragraphs = len(enhanced_text.split('\n\n'))
+    print(f"📊 Enhanced PDF structure: {original_line_count} lines → {enhanced_paragraphs} paragraphs")
+    print(f"🔧 Added {paragraph_breaks_added} paragraph breaks")
+    
+    return enhanced_text
+
+  def _clean_pdf_text_preserve_structure(self, text: str) -> str:
+    """
+    Clean PDF text while being more careful about preserving paragraph structure
+    that was specifically added for PDFs.
+    """
+    print("🧹 Applying PDF-specific structure cleaning...")
+    
+    # 1. Normalize line endings but preserve paragraph structure
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    
+    # 2. Be more conservative with paragraph break removal for PDFs
+    # Only remove truly excessive blank lines (3+ consecutive)
+    text = re.sub(r'\n\s*\n\s*\n\s*\n+', '\n\n\n', text)  # 4+ newlines -> 3 newlines
+    
+    # 3. Clean each line individually but preserve structure
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        if line.strip():  # Non-empty lines
+            # Remove excessive spaces within each line
+            cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+            cleaned_lines.append(cleaned_line)
+        else:  # Empty lines (preserve for paragraph structure)
+            cleaned_lines.append('')
+    
+    # 4. Rejoin lines
+    text = '\n'.join(cleaned_lines)
+    
+    # 5. Remove navigation patterns but be more conservative
+    nav_patterns = [
+        r'Skip to (?:main )?content\n?',
+        r'Menu\s*Toggle\n?',
+        r'Search\s*for:\n?',
+        r'Cookie\s*(?:Policy|Notice)\n?',
+        r'Privacy\s*Policy\n?',
+    ]
+    
+    for pattern in nav_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # 6. Final cleanup - be more conservative with paragraph normalization
+    # Only normalize truly excessive spacing
+    text = re.sub(r'\n\s*\n\s*\n\s*\n+', '\n\n', text)  # 4+ newlines -> 2 newlines
+    
+    # 7. Remove leading/trailing whitespace
+    text = text.strip()
+    
+    return text
+
+  def _line_contains_url(self, line: str) -> bool:
+    """Check if a line contains what looks like a URL.
+    
+    Uses high-recall/lower-precision patterns to identify potential URLs.
+    We err on the side of keeping lines that might contain URLs, even if 
+    this means occasionally keeping some non-URL text. This is preferable
+    to accidentally removing valid URLs during PDF cleaning."""
+    # Basic patterns to detect URLs in a line
+    url_indicators = [
+        r'https?://',
+        r'www\.',
+        r'\.[a-zA-Z]{2,6}/',  # domain with path
+        r'\.pdf\b',  # PDF files
+        r'\.html?\b',  # HTML files
+        r'\.gov\b',  # Government domains
+        r'\.org\b',  # Organization domains
+        r'\.edu\b',  # Education domains
+    ]
+    
+    for pattern in url_indicators:
+        if re.search(pattern, line, re.IGNORECASE):
+            return True
+    return False
 
   def _clean_extracted_text_preserve_urls_and_structure(self, text: str) -> str:
     """
