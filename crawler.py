@@ -189,49 +189,31 @@ class WebCrawler:
   def _extract_text_with_structure(self, element) -> str:
     """
     Extract text from HTML element while preserving paragraph structure.
-    Uses custom logic to add appropriate line breaks for RecursiveTextSplitter.
+    Simple approach focused on RecursiveTextSplitter compatibility.
     """
-    # Block-level elements that should create paragraph breaks
-    block_elements = {
-        'p', 'div', 'section', 'article', 'header', 'footer', 'main',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-        'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-        'blockquote', 'pre', 'table', 'tr', 'td', 'th',
-        'form', 'fieldset', 'legend', 'label'
-    }
+    if not hasattr(element, 'find_all'):
+        return element.get_text(separator='\n', strip=True)
     
-    # Elements that should create single line breaks
-    line_break_elements = {'br'}
+    # Simple approach: extract text and add paragraph breaks for block elements
+    result_parts = []
     
-    # Handle different input types
-    if hasattr(element, 'find_all'):
-        # It's a BeautifulSoup element
-        result_parts = []
+    # Find all block-level elements that should create paragraph breaks
+    block_elements = element.find_all([
+        'p', 'div', 'section', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'blockquote', 'pre'
+    ])
+    
+    if block_elements:
+        # Process each block element separately
+        for block in block_elements:
+            text = block.get_text(strip=True)
+            if text and len(text) > 5:  # Skip very short elements
+                result_parts.append(text)
         
-        # Process all child elements to maintain structure
-        for child in element.children:
-            if hasattr(child, 'name') and child.name:
-                if child.name in block_elements:
-                    child_text = child.get_text(separator=' ', strip=True)
-                    if child_text.strip():
-                        # Add double newlines for paragraph separation
-                        result_parts.append('\n\n' + child_text.strip() + '\n\n')
-                elif child.name in line_break_elements:
-                    result_parts.append('\n')
-                else:
-                    child_text = child.get_text(separator=' ', strip=True)
-                    if child_text.strip():
-                        result_parts.append(child_text.strip())
-            elif hasattr(child, 'strip'):
-                # It's a text node
-                text = child.strip()
-                if text:
-                    result_parts.append(text)
-        
-        # FIXED: Join with empty string instead of space to preserve newlines
-        return ''.join(result_parts)
+        # Join with double newlines for paragraph separation
+        return '\n\n'.join(result_parts)
     else:
-        # Fallback to simple text extraction
+        # If no block elements found, use simple extraction
         return element.get_text(separator='\n', strip=True)
 
   def _is_united_spinal_site(self, url: str) -> bool:
@@ -241,7 +223,7 @@ class WebCrawler:
     return 'unitedspinal.org' in domain
 
   def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Extract content specifically from United Spinal sites with enhanced paragraph detection."""
+    """Extract content specifically from United Spinal sites - simplified approach."""
     print(f"🏥 Extracting United Spinal content from: {url}")
     
     # First, remove any <div class="helpful"> elements
@@ -257,127 +239,83 @@ class WebCrawler:
     if content_element:
         print(f"🎯 Found United Spinal content in #content2col")
         
-        # Enhanced extraction for United Spinal - detect organization entries
-        content_text = self._extract_united_spinal_structured_content(content_element)
+        # Simple extraction focusing on paragraph structure
+        content_text = self._extract_text_simple_paragraphs(content_element)
         print(f"📏 United Spinal content length: {len(content_text)} characters")
         
-        # Clean the extracted text while preserving structure
-        content_text = self._clean_extracted_text_preserve_structure(content_text)
+        # Minimal cleaning to preserve structure
+        content_text = self._minimal_clean_preserve_structure(content_text)
         return content_text
     else:
         print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
-        # Fall back to standard content extraction
         return self._extract_standard_content(soup, url)
 
-  def _extract_united_spinal_structured_content(self, content_element) -> str:
+  def _extract_text_simple_paragraphs(self, element) -> str:
     """
-    Extract content from United Spinal sites with special handling for organization listings.
-    Each organization should be separated by blank lines for proper chunking.
+    Simple paragraph extraction - just focus on getting proper breaks between content blocks.
     """
-    # Look for patterns that indicate organization entries
-    # Organization names are often in bold or are standalone text blocks
-    result_parts = []
+    # Get all text blocks and separate them with double newlines
+    text_blocks = []
     
-    # Process all text elements and detect organization patterns
-    for element in content_element.find_all(text=True, recursive=True):
-        parent = element.parent
-        text = element.strip()
-        
-        if not text:
-            continue
-            
-        # Skip if parent is a script or style tag
-        if parent and parent.name in ['script', 'style']:
-            continue
-            
-        # Check if this looks like an organization name (often in bold or at start of line)
-        is_org_name = self._is_likely_organization_name(text, parent)
-        
-        if is_org_name:
-            # Add double newlines before organization names for paragraph separation
-            result_parts.append(f'\n\n{text}')
-        else:
-            # Regular text - add with space separation
-            if text.endswith('.') or len(text) > 50:
-                # Likely end of a sentence or description - add newline
-                result_parts.append(f' {text}\n')
+    # Look for common content patterns in United Spinal pages
+    # Often organization names are in separate elements or bold text
+    for child in element.find_all(['p', 'div', 'span', 'strong', 'b'], recursive=True):
+        text = child.get_text(strip=True)
+        if text and len(text) > 10:  # Skip very short text
+            # Check if this looks like an organization name (shorter text with key indicators)
+            if self._looks_like_organization_name(text):
+                text_blocks.append(f"\n\n{text}\n")  # Extra spacing around org names
             else:
-                result_parts.append(f' {text}')
+                text_blocks.append(text)
     
-    # Join and clean up
-    content_text = ''.join(result_parts)
+    # If we didn't find structured content, fall back to simple extraction
+    if not text_blocks:
+        text_blocks = [element.get_text(strip=True)]
     
-    # Additional cleanup for United Spinal format
-    content_text = self._post_process_united_spinal_content(content_text)
+    # Join and clean up spacing
+    result = ' '.join(text_blocks)
     
-    return content_text
+    # Ensure proper paragraph breaks
+    result = re.sub(r'\n\s*\n\s*\n+', '\n\n', result)  # Normalize multiple newlines to double
+    result = re.sub(r'([.!?])\s*([A-Z][a-z])', r'\1\n\n\2', result)  # Add breaks after sentences before new topics
+    
+    return result.strip()
 
-  def _is_likely_organization_name(self, text: str, parent_element) -> bool:
-    """
-    Detect if text is likely an organization name based on content and HTML structure.
-    """
-    # Check HTML structure clues
-    if parent_element:
-        # Often organization names are in bold
-        if parent_element.name in ['b', 'strong']:
-            return True
-        
-        # Or have specific classes/styles
-        classes = parent_element.get('class', [])
-        if any('title' in str(cls).lower() or 'name' in str(cls).lower() for cls in classes):
-            return True
-    
-    # Check content patterns
-    org_indicators = [
-        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center',
-        'Society', 'Organization', 'Organisation', 'NGO', 'Hospital', 'Clinic'
+  def _looks_like_organization_name(self, text: str) -> bool:
+    """Simple check for organization names."""
+    org_keywords = [
+        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center', 
+        'Society', 'Organization', 'Organisation', 'Hospital', 'Clinic', 'NGO'
     ]
     
-    # Check if text contains organization indicators and is short enough to be a name
-    if len(text) < 200 and any(indicator in text for indicator in org_indicators):
-        # Additional check: shouldn't contain common sentence patterns
-        sentence_indicators = [
-            'provides', 'offers', 'established', 'founded', 'working', 
-            'committed', 'mission', 'believe', 'stress'
-        ]
-        if not any(indicator.lower() in text.lower() for indicator in sentence_indicators):
-            return True
-    
+    # Short text with organization keywords, but not containing descriptive words
+    if (len(text) < 150 and 
+        any(keyword in text for keyword in org_keywords) and
+        not any(word in text.lower() for word in ['provides', 'offers', 'established', 'working', 'committed'])):
+        return True
     return False
 
-  def _post_process_united_spinal_content(self, content_text: str) -> str:
+  def _minimal_clean_preserve_structure(self, text: str) -> str:
     """
-    Post-process United Spinal content to ensure proper paragraph separation.
+    Minimal cleaning that preserves paragraph structure for RecursiveTextSplitter.
     """
-    # Split into lines and process
-    lines = content_text.split('\n')
-    processed_lines = []
+    # Normalize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            processed_lines.append('')
-            continue
-            
-        # If this line looks like contact info or details, ensure it's properly separated
-        if self._is_contact_or_detail_line(line):
-            # Add blank line before contact details if previous line wasn't blank
-            if i > 0 and processed_lines and processed_lines[-1].strip():
-                processed_lines.append('')
-            processed_lines.append(line)
-        else:
-            processed_lines.append(line)
+    # Remove excessive whitespace within lines, but preserve newlines
+    lines = text.split('\n')
+    cleaned_lines = []
     
-    return '\n'.join(processed_lines)
-
-  def _is_contact_or_detail_line(self, line: str) -> bool:
-    """Check if line contains contact information or detailed descriptions."""
-    contact_indicators = [
-        'Phone', 'Email', 'Address', 'Website', 'Tel', 'Fax',
-        '@', 'http', 'www.', '.com', '.org', '.in'
-    ]
+    for line in lines:
+        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+        cleaned_lines.append(cleaned_line)
     
-    return any(indicator in line for indicator in contact_indicators)
+    text = '\n'.join(cleaned_lines)
+    
+    # Clean up excessive newlines (max 2 consecutive)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
     """Standard content extraction logic (original behavior)."""
