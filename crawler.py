@@ -114,22 +114,24 @@ class WebCrawler:
 
   def _extract_text_with_structure(self, element) -> str:
     """
-    Generic HTML-to-text conversion that guarantees a blank line
-    between logical blocks so LangChain's RecursiveTextSplitter can
-    chunk correctly.  Works for any website.
+    Improved HTML-to-text conversion:
+    - Inserts blank lines between <p>, <li>, and heading tags.
+    - Preserves structure for better chunking.
     """
-    # 1. Raw text with one '\n' wherever BS4 sees a block break
+    block_tags = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+    blocks = []
+    for tag in element.find_all(block_tags, recursive=True):
+        text = tag.get_text(separator=' ', strip=True)
+        if text:
+            blocks.append(text)
+    if blocks:
+        return '\n\n'.join(blocks)
+    # Fallback: original method
     raw = element.get_text(separator='\n')
-
-    # 2. Normalise newlines and collapse consecutive ones to a single '\n'
     raw = raw.replace('\r\n', '\n').replace('\r', '\n')
     raw = re.sub(r'\n+', '\n', raw)
-
-    # 3. Trim each line and remove surplus internal spaces
     lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in raw.split('\n')]
-    non_empty_lines = [line for line in lines if line]      # drop empties
-
-    # 4. Join with *double* newlines ⇒ explicit blank line between paragraphs
+    non_empty_lines = [line for line in lines if line]
     return '\n\n'.join(non_empty_lines)
 
   def _is_united_spinal_site(self, url: str) -> bool:
