@@ -89,23 +89,30 @@ class WebCrawler:
     return hashlib.md5(normalized_url.encode()).hexdigest()
 
   def _extract_pdf_text(self, pdf_content: bytes) -> str:
-    """Extract text from PDF content."""
+    """Extract text from PDF content with better page separation."""
     if not PDF_PARSING_AVAILABLE:
-      return ""
+        return ""
     
     try:
-      pdf_file = io.BytesIO(pdf_content)
-      pdf_reader = PyPDF2.PdfReader(pdf_file)
-      
-      text = ""
-      for page_num in range(len(pdf_reader.pages)):
-        page = pdf_reader.pages[page_num]
-        text += page.extract_text() + "\n"
-      
-      return text.strip()
+        pdf_file = io.BytesIO(pdf_content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        text = ""
+        for page_num in range(len(pdf_reader.pages)):
+            page = pdf_reader.pages[page_num]
+            page_text = page.extract_text()
+            
+            if page_text.strip():  # Only add non-empty pages
+                text += page_text.strip()
+                
+                # Add page break (double newline) between pages for better paragraph structure
+                if page_num < len(pdf_reader.pages) - 1:  # Don't add after last page
+                    text += "\n\n"
+        
+        return text
     except Exception as e:
-      print(f"❌ Error extracting PDF text: {str(e)}")
-      return ""
+        print(f"❌ Error extracting PDF text: {str(e)}")
+        return ""
 
   def _is_pdf_url(self, url: str) -> bool:
     """Check if URL points to a PDF file."""
@@ -357,8 +364,13 @@ class WebCrawler:
     
     print(f"🗑️  Removed {removed_lines} PDF artifact lines")
     
-    # Rejoin and apply structure-preserving cleaning
+    # Rejoin lines
     text = '\n'.join(cleaned_lines)
+    
+    # PDF-specific paragraph detection and enhancement
+    text = self._enhance_pdf_paragraph_structure(text)
+    
+    # Apply structure-preserving cleaning
     text = self._clean_extracted_text_preserve_structure(text)
     
     # Re-inject any URLs that were lost during cleaning
@@ -366,6 +378,72 @@ class WebCrawler:
     
     print(f"📏 Final PDF content length: {len(text)} characters")
     return text
+
+  def _enhance_pdf_paragraph_structure(self, text: str) -> str:
+    """
+    Enhance paragraph structure specifically for PDF text.
+    PDFs often have irregular line breaks that need special handling.
+    """
+    print("🔧 Enhancing PDF paragraph structure...")
+    
+    # Split into lines for processing
+    lines = text.split('\n')
+    enhanced_lines = []
+    
+    for i, line in enumerate(lines):
+        current_line = line.strip()
+        
+        # Skip empty lines - they're already paragraph breaks
+        if not current_line:
+            enhanced_lines.append('')
+            continue
+        
+        # Check if this line should start a new paragraph
+        should_break = False
+        
+        # 1. Lines that start with capital letters after a sentence-ending line
+        if i > 0:
+            prev_line = lines[i-1].strip()
+            if (prev_line.endswith(('.', '!', '?', ':')) and 
+                current_line and current_line[0].isupper() and 
+                len(current_line) > 10):  # Avoid breaking on short headings
+                should_break = True
+        
+        # 2. Lines that look like headings (short, title case, no ending punctuation)
+        if (len(current_line) < 100 and 
+            current_line.count(' ') < 8 and  # Not too many words
+            current_line[0].isupper() and
+            not current_line.endswith(('.', '!', '?', ',', ';')) and
+            not current_line.lower().startswith(('the ', 'a ', 'an ', 'and ', 'or ', 'but '))):
+            should_break = True
+        
+        # 3. Lines that start with bullet points or numbers
+        if re.match(r'^\s*[•\-\*]\s+', current_line) or re.match(r'^\s*\d+[\.\)]\s+', current_line):
+            should_break = True
+        
+        # 4. Lines that start with organization/location names (common in directories)
+        if re.match(r'^[A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO|Inc|LLC|Corp)\b', current_line):
+            should_break = True
+        
+        # 5. Lines that start with location indicators
+        if re.match(r'^[A-Z][^.]*(?:Street|Road|Avenue|Drive|Lane|Boulevard|Plaza|Square|Park|City|State|Province|Country)\b', current_line):
+            should_break = True
+        
+        # Add paragraph break if needed
+        if should_break and enhanced_lines and enhanced_lines[-1]:  # Don't add multiple breaks
+            enhanced_lines.append('')  # Add blank line for paragraph break
+        
+        enhanced_lines.append(current_line)
+    
+    # Rejoin and return
+    enhanced_text = '\n'.join(enhanced_lines)
+    
+    # Count paragraph breaks added
+    original_paragraphs = len([line for line in lines if line.strip()])
+    enhanced_paragraphs = len(enhanced_text.split('\n\n'))
+    print(f"📊 Enhanced PDF structure: {original_paragraphs} lines → {enhanced_paragraphs} paragraphs")
+    
+    return enhanced_text
 
   def _line_contains_url(self, line: str) -> bool:
     """Check if a line contains what looks like a URL.
