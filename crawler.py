@@ -535,9 +535,6 @@ class WebCrawler:
     """
     print(f"🔗 Extracting links from main content area: {url}")
     
-    # Find the main content area using the same logic as _extract_main_content
-    main_content_element = None
-    
     # Check if this is a United Spinal site that needs special handling
     if self._is_united_spinal_site(url):
         # Look for the specific content div
@@ -1247,6 +1244,12 @@ class WebCrawler:
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
     """Updated standard content extraction with better paragraph handling."""
+    
+    # Check if this is a United Spinal site that needs special handling
+    if self._is_united_spinal_site(url):
+        return self._extract_united_spinal_content(soup, url)
+    
+    # For all other sites, use the standard approach
     main_content = self._find_main_content_area(soup, url)
     
     if main_content:
