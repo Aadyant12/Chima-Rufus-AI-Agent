@@ -224,7 +224,7 @@ class WebCrawler:
         else:
             content_text = self._extract_text_with_structure(soup)
     
-    # Keep paragraph / blank-line structure intact
+    # Only this cleaner!
     return self._clean_extracted_text_preserve_structure(content_text)
 
   def _find_main_content_area(self, soup, url: str = None):
@@ -1289,3 +1289,12 @@ class WebCrawler:
       cleaned_page = {k: v for k, v in page.items() if k != 'html'}
       cleaned_pages.append(cleaned_page)
     return cleaned_pages
+
+  def _clean_extracted_text_preserve_structure(self, text: str) -> str:
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    lines = text.split('\n')
+    cleaned_lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in lines]
+    text = '\n'.join(cleaned_lines)
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+    return text.strip()
