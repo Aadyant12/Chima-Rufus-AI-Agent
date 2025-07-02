@@ -224,8 +224,8 @@ class WebCrawler:
         else:
             content_text = self._extract_text_with_structure(soup)
     
-    # Apply the same break-ensuring logic
-    return self._clean_and_ensure_breaks(content_text)
+    # Keep paragraph / blank-line structure intact
+    return self._clean_extracted_text_preserve_structure(content_text)
 
   def _find_main_content_area(self, soup, url: str = None):
     """
