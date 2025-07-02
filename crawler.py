@@ -114,74 +114,23 @@ class WebCrawler:
 
   def _extract_text_with_structure(self, element) -> str:
     """
-    UNIVERSAL approach: Extract text with proper paragraph breaks from ANY HTML.
-    The key is to treat every block-level element as a paragraph boundary.
+    Generic HTML-to-text conversion that guarantees a blank line
+    between logical blocks so LangChain's RecursiveTextSplitter can
+    chunk correctly.  Works for any website.
     """
-    if not hasattr(element, 'find_all'):
-        return str(element).strip()
-    
-    # Block elements that should create paragraph breaks
-    block_elements = {
-        'p', 'div', 'section', 'article', 'header', 'footer', 'main',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
-        'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-        'blockquote', 'pre', 'table', 'tr', 'td', 'th',
-        'form', 'fieldset', 'legend', 'address'
-    }
-    
-    def extract_recursive(elem):
-        """Recursively extract text, adding breaks for block elements."""
-        if not hasattr(elem, 'children'):
-            # It's a text node
-            text = str(elem).strip()
-            return [text] if text else []
-        
-        result = []
-        for child in elem.children:
-            if hasattr(child, 'name'):
-                # It's an HTML element
-                if child.name in ['script', 'style']:
-                    continue
-                
-                child_text = extract_recursive(child)
-                if child_text:
-                    if child.name in block_elements:
-                        # Block element - wrap with paragraph breaks
-                        result.extend(['', ''])  # Add blank lines before
-                        result.extend(child_text)
-                        result.extend(['', ''])  # Add blank lines after
-                    else:
-                        # Inline element - just add the text
-                        result.extend(child_text)
-            else:
-                # It's a text node
-                text = str(child).strip()
-                if text:
-                    result.append(text)
-        
-        return result
-    
-    # Extract all text parts
-    text_parts = extract_recursive(element)
-    
-    # Join with single newlines, then clean up
-    raw_text = '\n'.join(text_parts)
-    
-    # Clean up excessive newlines (convert 3+ newlines to exactly 2)
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', raw_text)
-    
-    # Clean up spaces within lines
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
-        cleaned_lines.append(cleaned_line)
-    
-    # Rejoin and final cleanup
-    result = '\n'.join(cleaned_lines)
-    result = re.sub(r'\n\n\n+', '\n\n', result)  # Ensure max 2 consecutive newlines
-    
-    return result.strip()
+    # 1. Raw text with one '\n' wherever BS4 sees a block break
+    raw = element.get_text(separator='\n')
+
+    # 2. Normalise newlines and collapse consecutive ones to a single '\n'
+    raw = raw.replace('\r\n', '\n').replace('\r', '\n')
+    raw = re.sub(r'\n+', '\n', raw)
+
+    # 3. Trim each line and remove surplus internal spaces
+    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in raw.split('\n')]
+    non_empty_lines = [line for line in lines if line]      # drop empties
+
+    # 4. Join with *double* newlines ⇒ explicit blank line between paragraphs
+    return '\n\n'.join(non_empty_lines)
 
   def _is_united_spinal_site(self, url: str) -> bool:
     """Check if the URL is from a United Spinal site that needs special handling."""
