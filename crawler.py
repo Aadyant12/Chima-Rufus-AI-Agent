@@ -115,6 +115,7 @@ class WebCrawler:
   def _extract_main_content(self, soup: BeautifulSoup, url: str) -> str:
     """
     Extract main content from HTML, filtering out headers, footers, navigation, ads, etc.
+    Preserves paragraph structure for RecursiveTextSplitter.
     """
     print(f"🧹 Filtering HTML content for: {url}")
     
@@ -168,21 +169,78 @@ class WebCrawler:
     
     if main_content:
         print(f"✅ Found main content area")
-        content_text = main_content.get_text(separator=' ', strip=True)
+        # Use newline separator to preserve paragraph structure
+        content_text = self._extract_text_with_structure(main_content)
     else:
         print(f"⚠️  No main content area found, using body")
         # Fallback: use body but with additional filtering
         body = soup.find('body')
         if body:
-            content_text = body.get_text(separator=' ', strip=True)
+            content_text = self._extract_text_with_structure(body)
         else:
-            content_text = soup.get_text(separator=' ', strip=True)
+            content_text = self._extract_text_with_structure(soup)
     
-    # Strategy 3: Clean up the extracted text
-    content_text = self._clean_extracted_text(content_text)
+    # Strategy 3: Clean up the extracted text while preserving structure
+    content_text = self._clean_extracted_text_preserve_structure(content_text)
     
     print(f"📏 Final HTML content length: {len(content_text)} characters")
     return content_text
+
+  def _extract_text_with_structure(self, element) -> str:
+    """
+    Extract text from HTML element while preserving paragraph structure.
+    Uses custom logic to add appropriate line breaks.
+    """
+    # Block-level elements that should create paragraph breaks
+    block_elements = {
+        'p', 'div', 'section', 'article', 'header', 'footer', 'main',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+        'blockquote', 'pre', 'table', 'tr', 'td', 'th',
+        'form', 'fieldset', 'legend', 'label'
+    }
+    
+    # Elements that should create single line breaks
+    line_break_elements = {'br'}
+    
+    def extract_with_breaks(elem):
+        if elem.name in block_elements:
+            # Add double newline before block elements (except at start)
+            text = '\n\n' + elem.get_text(separator=' ', strip=True) + '\n\n'
+        elif elem.name in line_break_elements:
+            text = '\n'
+        else:
+            text = elem.get_text(separator=' ', strip=True)
+        return text
+    
+    # Handle different input types
+    if hasattr(element, 'find_all'):
+        # It's a BeautifulSoup element
+        result_parts = []
+        
+        # Process all child elements to maintain structure
+        for child in element.children:
+            if hasattr(child, 'name') and child.name:
+                if child.name in block_elements:
+                    child_text = child.get_text(separator=' ', strip=True)
+                    if child_text.strip():
+                        result_parts.append('\n\n' + child_text.strip())
+                elif child.name in line_break_elements:
+                    result_parts.append('\n')
+                else:
+                    child_text = child.get_text(separator=' ', strip=True)
+                    if child_text.strip():
+                        result_parts.append(child_text.strip())
+            elif hasattr(child, 'strip'):
+                # It's a text node
+                text = child.strip()
+                if text:
+                    result_parts.append(text)
+        
+        return ' '.join(result_parts)
+    else:
+        # Fallback to simple text extraction
+        return element.get_text(separator='\n', strip=True)
 
   def _is_united_spinal_site(self, url: str) -> bool:
     """Check if the URL is from a United Spinal site that needs special handling."""
@@ -206,11 +264,11 @@ class WebCrawler:
     
     if content_element:
         print(f"🎯 Found United Spinal content in #content2col")
-        content_text = content_element.get_text(separator=' ', strip=True)
+        content_text = self._extract_text_with_structure(content_element)
         print(f"📏 United Spinal content length: {len(content_text)} characters")
         
-        # Clean the extracted text
-        content_text = self._clean_extracted_text(content_text)
+        # Clean the extracted text while preserving structure
+        content_text = self._clean_extracted_text_preserve_structure(content_text)
         return content_text
     else:
         print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
@@ -222,16 +280,65 @@ class WebCrawler:
     main_content = self._find_main_content_area(soup, url)
     
     if main_content:
-        content_text = main_content.get_text(separator=' ', strip=True)
+        content_text = self._extract_text_with_structure(main_content)
     else:
         # Fallback: use body
         body = soup.find('body')
         if body:
-            content_text = body.get_text(separator=' ', strip=True)
+            content_text = self._extract_text_with_structure(body)
         else:
-            content_text = soup.get_text(separator=' ', strip=True)
+            content_text = self._extract_text_with_structure(soup)
     
-    return self._clean_extracted_text(content_text)
+    return self._clean_extracted_text_preserve_structure(content_text)
+
+  def _clean_extracted_text_preserve_structure(self, text: str) -> str:
+    """
+    Clean and normalize the extracted text content while preserving paragraph structure
+    for RecursiveTextSplitter compatibility.
+    """
+    # First normalize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    
+    # Remove excessive blank lines (more than 2 consecutive newlines)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Normalize spaces within lines (but preserve newlines)
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Remove excessive spaces within each line
+        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+        cleaned_lines.append(cleaned_line)
+    
+    text = '\n'.join(cleaned_lines)
+    
+    # Remove common navigational text patterns
+    nav_patterns = [
+        r'Home\s*>\s*',
+        r'Skip to (?:main )?content',
+        r'Menu\s*Toggle',
+        r'Search\s*for:',
+        r'Categories?\s*:',
+        r'Tags?\s*:',
+        r'Share\s*this\s*(?:post|article|page)',
+        r'Follow\s*us\s*on',
+        r'Subscribe\s*to\s*our',
+        r'Cookie\s*(?:Policy|Notice)',
+        r'Privacy\s*Policy',
+        r'Terms\s*(?:of\s*(?:Service|Use))?',
+        r'Copyright\s*©',
+        r'All\s*rights\s*reserved'
+    ]
+    
+    for pattern in nav_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Clean up any resulting empty lines or excessive whitespace
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)  # Max 2 consecutive newlines
+    text = text.strip()
+    
+    return text
 
   def _find_main_content_area(self, soup, url: str = None):
     """
@@ -341,7 +448,7 @@ class WebCrawler:
 
   def _clean_pdf_text(self, pdf_text: str, url: str) -> str:
     """
-    Clean and filter PDF text content to remove headers, footers, page numbers, etc.
+    Clean and filter PDF text content while preserving paragraph structure.
     """
     print(f"🧹 Filtering PDF content for: {url}")
     
@@ -377,41 +484,40 @@ class WebCrawler:
     
     removed_lines = 0
     for line in lines:
-        line = line.strip()
+        line_stripped = line.strip()
         
-        # Skip empty lines
-        if not line:
-            continue
-            
         # Check if line contains URLs - if so, ALWAYS keep it
-        if self._line_contains_url(line):
-            cleaned_lines.append(line)
+        if self._line_contains_url(line_stripped):
+            cleaned_lines.append(line_stripped)
             continue
             
         # Check if line matches any artifact pattern
         is_artifact = False
         for pattern in pdf_artifacts:
-            if re.match(pattern, line, re.IGNORECASE):
+            if re.match(pattern, line_stripped, re.IGNORECASE):
                 is_artifact = True
                 removed_lines += 1
                 break
         
         # Only skip very short lines that don't contain URLs or meaningful punctuation
-        if len(line) < 3 and not any(punct in line for punct in ['.', '!', '?', ':', '/', '@']):
+        if len(line_stripped) < 3 and not any(punct in line_stripped for punct in ['.', '!', '?', ':', '/', '@']):
             is_artifact = True
             removed_lines += 1
         
         if not is_artifact:
-            cleaned_lines.append(line)
+            cleaned_lines.append(line_stripped)
+        elif not line_stripped:
+            # Keep empty lines for paragraph structure
+            cleaned_lines.append('')
     
     print(f"🗑️  Removed {removed_lines} PDF artifact lines")
     
-    # Rejoin lines
-    cleaned_text = ' '.join(cleaned_lines)
+    # Rejoin lines preserving paragraph structure
+    cleaned_text = '\n'.join(cleaned_lines)
     print(f"🔍 Cleaned text length: {len(cleaned_text)} characters")
     
-    # Apply general text cleaning - but preserve URLs
-    cleaned_text = self._clean_extracted_text_preserve_urls(cleaned_text)
+    # Apply general text cleaning - but preserve URLs and structure
+    cleaned_text = self._clean_extracted_text_preserve_urls_and_structure(cleaned_text)
     
     # Re-inject URLs that were found in raw text if they're not already present
     cleaned_text = self._preserve_urls_in_cleaned_text_improved(cleaned_text, raw_urls)
@@ -443,12 +549,26 @@ class WebCrawler:
             return True
     return False
 
-  def _clean_extracted_text_preserve_urls(self, text: str) -> str:
+  def _clean_extracted_text_preserve_urls_and_structure(self, text: str) -> str:
     """
-    Clean and normalize the extracted text content while preserving URLs.
+    Clean and normalize the extracted text content while preserving URLs and paragraph structure.
     """
-    # Remove excessive whitespace but preserve URLs
-    text = re.sub(r'\s+', ' ', text)
+    # First normalize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    
+    # Remove excessive blank lines (more than 2 consecutive newlines)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Normalize spaces within lines (but preserve newlines)
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Remove excessive spaces within each line
+        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+        cleaned_lines.append(cleaned_line)
+    
+    text = '\n'.join(cleaned_lines)
     
     # Remove common navigational text patterns - but be careful not to remove URLs
     nav_patterns = [
@@ -467,8 +587,9 @@ class WebCrawler:
     for pattern in nav_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Final cleanup
-    text = re.sub(r'\s+', ' ', text).strip()
+    # Clean up any resulting empty lines or excessive whitespace
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)  # Max 2 consecutive newlines
+    text = text.strip()
     
     return text
 
