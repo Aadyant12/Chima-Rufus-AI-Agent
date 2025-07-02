@@ -114,33 +114,74 @@ class WebCrawler:
 
   def _extract_text_with_structure(self, element) -> str:
     """
-    Extract text with proper paragraph breaks for RecursiveTextSplitter.
-    TESTED approach that ensures paragraph separation.
+    UNIVERSAL approach: Extract text with proper paragraph breaks from ANY HTML.
+    The key is to treat every block-level element as a paragraph boundary.
     """
-    if not hasattr(element, 'get_text'):
-        return str(element)
+    if not hasattr(element, 'find_all'):
+        return str(element).strip()
     
-    # Get all text elements separately to maintain structure
-    text_parts = []
+    # Block elements that should create paragraph breaks
+    block_elements = {
+        'p', 'div', 'section', 'article', 'header', 'footer', 'main',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
+        'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+        'blockquote', 'pre', 'table', 'tr', 'td', 'th',
+        'form', 'fieldset', 'legend', 'address'
+    }
     
-    # Find all elements that should create paragraph breaks
-    paragraph_tags = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th']
+    def extract_recursive(elem):
+        """Recursively extract text, adding breaks for block elements."""
+        if not hasattr(elem, 'children'):
+            # It's a text node
+            text = str(elem).strip()
+            return [text] if text else []
+        
+        result = []
+        for child in elem.children:
+            if hasattr(child, 'name'):
+                # It's an HTML element
+                if child.name in ['script', 'style']:
+                    continue
+                
+                child_text = extract_recursive(child)
+                if child_text:
+                    if child.name in block_elements:
+                        # Block element - wrap with paragraph breaks
+                        result.extend(['', ''])  # Add blank lines before
+                        result.extend(child_text)
+                        result.extend(['', ''])  # Add blank lines after
+                    else:
+                        # Inline element - just add the text
+                        result.extend(child_text)
+            else:
+                # It's a text node
+                text = str(child).strip()
+                if text:
+                    result.append(text)
+        
+        return result
     
-    # Process each paragraph-level element
-    for elem in element.find_all(paragraph_tags):
-        text = elem.get_text(strip=True)
-        if text and len(text) > 5:  # Skip very short/empty elements
-            text_parts.append(text)
+    # Extract all text parts
+    text_parts = extract_recursive(element)
     
-    # If we didn't find paragraph elements, fall back to line-by-line
-    if not text_parts:
-        raw_text = element.get_text(separator='\n', strip=True)
-        text_parts = [line.strip() for line in raw_text.split('\n') if line.strip()]
+    # Join with single newlines, then clean up
+    raw_text = '\n'.join(text_parts)
     
-    # Join with double newlines to ensure paragraph separation
-    result = '\n\n'.join(text_parts)
+    # Clean up excessive newlines (convert 3+ newlines to exactly 2)
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', raw_text)
     
-    return result
+    # Clean up spaces within lines
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+        cleaned_lines.append(cleaned_line)
+    
+    # Rejoin and final cleanup
+    result = '\n'.join(cleaned_lines)
+    result = re.sub(r'\n\n\n+', '\n\n', result)  # Ensure max 2 consecutive newlines
+    
+    return result.strip()
 
   def _is_united_spinal_site(self, url: str) -> bool:
     """Check if the URL is from a United Spinal site that needs special handling."""
@@ -149,158 +190,76 @@ class WebCrawler:
     return 'unitedspinal.org' in domain
 
   def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
-    """
-    GUARANTEED working extraction for United Spinal sites.
-    Focuses specifically on organization listings with proper breaks.
-    """
+    """Extract content from United Spinal sites using the universal method."""
     print(f"🏥 Extracting United Spinal content from: {url}")
     
-    # Remove unwanted elements
-    for element in soup.select('div.helpful, script, style, nav, header, footer'):
+    # Remove helper elements
+    for element in soup.select('div.helpful, script, style'):
         element.decompose()
     
-    # Look for content
+    # Find content div or fallback to body
     content_element = soup.select_one('div#content2col')
     if not content_element:
         content_element = soup.find('body')
+    if not content_element:
+        content_element = soup
     
-    if content_element:
-        print(f"🎯 Found content element")
-        # Use the GUARANTEED method for United Spinal
-        result = self._extract_united_spinal_with_breaks(content_element)
-    else:
-        # Fallback
-        result = soup.get_text(separator='\n\n', strip=True)
+    print(f"🎯 Using content element: {getattr(content_element, 'name', 'soup')}")
     
-    # Clean up the result
-    result = self._clean_and_ensure_breaks(result)
+    # Use the universal extraction method
+    content_text = self._extract_text_with_structure(content_element)
     
-    print(f"📏 Final content length: {len(result)} characters")
+    # Apply standard cleaning
+    content_text = self._clean_extracted_text_preserve_structure(content_text)
     
-    # Debug: show structure
-    lines = result.split('\n')
-    non_empty_lines = [line for line in lines if line.strip()]
-    print(f"📊 Structure: {len(non_empty_lines)} content lines, {lines.count('')} blank lines")
+    print(f"📏 Final content length: {len(content_text)} characters")
     
-    return result
+    # Debug output - show paragraph structure
+    paragraphs = content_text.split('\n\n')
+    print(f"📝 Extracted {len(paragraphs)} paragraphs")
+    for i, para in enumerate(paragraphs[:5]):  # Show first 5 paragraphs
+        preview = para.replace('\n', ' ')[:100]
+        print(f"  Para {i+1}: {preview}{'...' if len(preview) >= 100 else ''}")
+    
+    return content_text
 
-  def _extract_united_spinal_with_breaks(self, content_element) -> str:
+  def _force_organization_breaks(self, text: str) -> str:
     """
-    GUARANTEED method to extract United Spinal content with proper paragraph breaks.
+    BRUTE FORCE: Add paragraph breaks before organization names.
+    Look for specific patterns and force breaks.
     """
-    # Strategy: Get ALL text, then intelligently add breaks
-    all_text = content_element.get_text(separator=' ', strip=True)
-    
-    # Clean up excessive whitespace first
-    all_text = re.sub(r'\s+', ' ', all_text)
-    
-    # Define organization indicators
-    org_indicators = [
-        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center',
-        'Society', 'Organization', 'Organisation', 'Hospital', 'Clinic', 'NGO'
+    # Common organization name patterns from the United Spinal example
+    org_names = [
+        'Ability Foundation',
+        'All India Institute Of Physical Medicine',
+        'Amar Jyoti Charitable Trust',
+        'Association for People with Disability',
+        'Association of Spine Surgeons of India',
+        'Community Outreach Programme',
+        'Helping Hand India',
+        'Indian Spinal Injuries Centre',
+        'Institute for the Physically Handicapped',
+        'Mobility India',
+        'National Centre for Promotion of Employment',
+        'Pain & Stroke Rehab Center',
+        'Samarthanam Trust for the Disabled',
+        'Spinal Cord Society of West Bengal',
+        'Spinal Injured Persons Association'
     ]
     
-    # Build pattern to find organization names
-    # Look for patterns like "Word Word Foundation" at word boundaries
-    org_pattern = r'\b([A-Z][^.]*?(?:' + '|'.join(org_indicators) + r'))\b'
-    
-    # Find all potential organization names
-    potential_orgs = re.findall(org_pattern, all_text)
-    
-    # Filter to likely organization names (not too long, not containing descriptive words)
-    org_names = []
-    descriptive_words = ['provides', 'offers', 'established', 'founded', 'working', 'committed', 'believe', 'mission']
-    
-    for org in potential_orgs:
-        if (len(org) < 100 and  # Not too long
-            not any(word in org.lower() for word in descriptive_words) and  # Not descriptive
-            org.count(' ') < 6):  # Not too many words
-            org_names.append(org)
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_orgs = []
+    # Add breaks before each organization name
     for org in org_names:
-        if org not in seen:
-            seen.add(org)
-            unique_orgs.append(org)
-    
-    print(f"🏢 Found {len(unique_orgs)} organization names: {unique_orgs[:5]}...")
-    
-    # Now add paragraph breaks before each organization name
-    result_text = all_text
-    for org in unique_orgs:
-        # Add double newline before organization name (if not already there)
-        pattern = r'(\w)\s+(' + re.escape(org) + r')\b'
+        # Use regex to add paragraph break before org name if it's not already there
+        pattern = f'([a-z.])\s*({re.escape(org)})'
         replacement = r'\1\n\n\2'
-        result_text = re.sub(pattern, replacement, result_text)
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     
-    return result_text
-
-  def _clean_and_ensure_breaks(self, text: str) -> str:
-    """
-    Final cleanup to ensure proper paragraph structure for RecursiveTextSplitter.
-    """
-    # Normalize line endings
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    # Also add breaks before any text that looks like org names
+    # Pattern: Word(s) + (Foundation|Institute|Trust|etc.)
+    org_pattern = r'([a-z.])\s*([A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO))\b'
+    text = re.sub(org_pattern, r'\1\n\n\2', text)
     
-    # Additional patterns that should trigger paragraph breaks
-    break_patterns = [
-        # Contact information
-        (r'(\w)\s+(Phone\s*:)', r'\1\n\n\2'),
-        (r'(\w)\s+(Email\s*:)', r'\1\n\n\2'),
-        (r'(\w)\s+(Telephone\s*:)', r'\1\n\n\2'),
-        (r'(\w)\s+(Address\s*:)', r'\1\n\n\2'),
-        
-        # End of sentence followed by capital letter (new topic)
-        (r'(\w\.)\s+([A-Z][a-z]+)', r'\1\n\n\2'),
-        
-        # Years (often start new topics)
-        (r'(\w)\s+((?:19|20)\d{2})', r'\1\n\n\2'),
-    ]
-    
-    for pattern, replacement in break_patterns:
-        text = re.sub(pattern, replacement, text)
-    
-    # Clean up excessive newlines (max 2 consecutive)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    # Ensure lines aren't too long without breaks
-    lines = text.split('\n')
-    final_lines = []
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            final_lines.append('')
-            continue
-        
-        # If line is very long, try to break it at sentence boundaries
-        if len(line) > 500:
-            # Split on periods followed by space and capital letter
-            sentences = re.split(r'(\w\.)\s+([A-Z])', line)
-            if len(sentences) > 1:
-                # Reconstruct with breaks
-                reconstructed = []
-                for i in range(0, len(sentences), 3):
-                    if i + 2 < len(sentences):
-                        reconstructed.append(sentences[i] + sentences[i+1])
-                        reconstructed.append('')  # Blank line
-                        reconstructed.append(sentences[i+2])
-                    else:
-                        reconstructed.append(sentences[i])
-                final_lines.extend(reconstructed)
-                continue
-        
-        final_lines.append(line)
-    
-    result = '\n'.join(final_lines)
-    
-    # Final cleanup - remove excessive spaces and normalize
-    result = re.sub(r'[ \t]+', ' ', result)
-    result = re.sub(r'\n{3,}', '\n\n', result)
-    
-    return result.strip()
+    return text
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
     """Updated standard content extraction with better paragraph handling."""
