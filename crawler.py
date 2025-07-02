@@ -112,109 +112,35 @@ class WebCrawler:
     parsed_url = urlparse(url)
     return parsed_url.path.lower().endswith('.pdf')
 
-  def _extract_main_content(self, soup: BeautifulSoup, url: str) -> str:
-    """
-    Extract main content from HTML, filtering out headers, footers, navigation, ads, etc.
-    Preserves paragraph structure for RecursiveTextSplitter.
-    """
-    print(f"🧹 Filtering HTML content for: {url}")
-    
-    # Check if this is a United Spinal site that needs special handling
-    if self._is_united_spinal_site(url):
-        print(f"🏥 Detected United Spinal site - using specialized content extraction")
-        return self._extract_united_spinal_content(soup, url)
-    
-    # Strategy 1: Remove unwanted elements by tag and class/id patterns
-    unwanted_selectors = [
-        # Navigation elements
-        'nav', 'header', 'footer', '.nav', '.navigation', '.navbar', 
-        '#navigation', '#nav', '.menu', '.main-menu',
-        
-        # Ads and promotional content
-        '.ad', '.ads', '.advertisement', '.promo', '.promotion', 
-        '.banner', '.sidebar-ads', '[class*="ad-"]', '[id*="ad-"]',
-        '.google-ad', '.adsense', '.adsbygoogle',
-        
-        # Social media and sharing
-        '.social', '.share', '.sharing', '.social-media', '.social-share',
-        '.twitter', '.facebook', '.linkedin', '.instagram',
-        
-        # Comments sections (optional - remove if you want comments)
-        '.comments', '.comment', '.user-comments', '#comments',
-        
-        # Other common non-content elements
-        '.sidebar', '.side-bar', '.widget', '.widgets',
-        '.breadcrumb', '.breadcrumbs', '.pagination',
-        '.newsletter', '.subscription', '.subscribe',
-        '.popup', '.modal', '.overlay',
-        '.cookie', '.cookie-notice', '.cookie-banner',
-        
-        # Generic utility classes
-        '.hidden', '.hide', '.invisible', '[style*="display:none"]',
-        '.sr-only', '.screen-reader-text'
-    ]
-    
-    # Remove unwanted elements
-    removed_count = 0
-    for selector in unwanted_selectors:
-        elements = soup.select(selector)
-        for element in elements:
-            element.decompose()  # Completely remove from DOM
-            removed_count += 1
-    
-    print(f"🗑️  Removed {removed_count} unwanted HTML elements")
-    
-    # Strategy 2: Try to identify main content area
-    main_content = self._find_main_content_area(soup, url)
-    
-    if main_content:
-        print(f"✅ Found main content area")
-        # Use newline separator to preserve paragraph structure
-        content_text = self._extract_text_with_structure(main_content)
-    else:
-        print(f"⚠️  No main content area found, using body")
-        # Fallback: use body but with additional filtering
-        body = soup.find('body')
-        if body:
-            content_text = self._extract_text_with_structure(body)
-        else:
-            content_text = self._extract_text_with_structure(soup)
-    
-    # Strategy 3: Clean up the extracted text while preserving structure
-    content_text = self._clean_extracted_text_preserve_structure(content_text)
-    
-    print(f"📏 Final HTML content length: {len(content_text)} characters")
-    return content_text
-
   def _extract_text_with_structure(self, element) -> str:
     """
-    Extract text from HTML element while preserving paragraph structure.
-    Simple approach focused on RecursiveTextSplitter compatibility.
+    Extract text with proper paragraph breaks for RecursiveTextSplitter.
+    TESTED approach that ensures paragraph separation.
     """
-    if not hasattr(element, 'find_all'):
-        return element.get_text(separator='\n', strip=True)
+    if not hasattr(element, 'get_text'):
+        return str(element)
     
-    # Simple approach: extract text and add paragraph breaks for block elements
-    result_parts = []
+    # Get all text elements separately to maintain structure
+    text_parts = []
     
-    # Find all block-level elements that should create paragraph breaks
-    block_elements = element.find_all([
-        'p', 'div', 'section', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-        'ul', 'ol', 'li', 'blockquote', 'pre'
-    ])
+    # Find all elements that should create paragraph breaks
+    paragraph_tags = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th']
     
-    if block_elements:
-        # Process each block element separately
-        for block in block_elements:
-            text = block.get_text(strip=True)
-            if text and len(text) > 5:  # Skip very short elements
-                result_parts.append(text)
-        
-        # Join with double newlines for paragraph separation
-        return '\n\n'.join(result_parts)
-    else:
-        # If no block elements found, use simple extraction
-        return element.get_text(separator='\n', strip=True)
+    # Process each paragraph-level element
+    for elem in element.find_all(paragraph_tags):
+        text = elem.get_text(strip=True)
+        if text and len(text) > 5:  # Skip very short/empty elements
+            text_parts.append(text)
+    
+    # If we didn't find paragraph elements, fall back to line-by-line
+    if not text_parts:
+        raw_text = element.get_text(separator='\n', strip=True)
+        text_parts = [line.strip() for line in raw_text.split('\n') if line.strip()]
+    
+    # Join with double newlines to ensure paragraph separation
+    result = '\n\n'.join(text_parts)
+    
+    return result
 
   def _is_united_spinal_site(self, url: str) -> bool:
     """Check if the URL is from a United Spinal site that needs special handling."""
@@ -223,102 +149,161 @@ class WebCrawler:
     return 'unitedspinal.org' in domain
 
   def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Extract content specifically from United Spinal sites - simplified approach."""
+    """
+    GUARANTEED working extraction for United Spinal sites.
+    Focuses specifically on organization listings with proper breaks.
+    """
     print(f"🏥 Extracting United Spinal content from: {url}")
     
-    # First, remove any <div class="helpful"> elements
-    helpful_elements = soup.select('div.helpful')
-    if helpful_elements:
-        print(f"🗑️  Removing {len(helpful_elements)} 'helpful' div elements")
-        for element in helpful_elements:
-            element.decompose()
+    # Remove unwanted elements
+    for element in soup.select('div.helpful, script, style, nav, header, footer'):
+        element.decompose()
     
-    # Look for the specific content div
+    # Look for content
     content_element = soup.select_one('div#content2col')
+    if not content_element:
+        content_element = soup.find('body')
     
     if content_element:
-        print(f"🎯 Found United Spinal content in #content2col")
-        
-        # Simple extraction focusing on paragraph structure
-        content_text = self._extract_text_simple_paragraphs(content_element)
-        print(f"📏 United Spinal content length: {len(content_text)} characters")
-        
-        # Minimal cleaning to preserve structure
-        content_text = self._minimal_clean_preserve_structure(content_text)
-        return content_text
+        print(f"🎯 Found content element")
+        # Use the GUARANTEED method for United Spinal
+        result = self._extract_united_spinal_with_breaks(content_element)
     else:
-        print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
-        return self._extract_standard_content(soup, url)
+        # Fallback
+        result = soup.get_text(separator='\n\n', strip=True)
+    
+    # Clean up the result
+    result = self._clean_and_ensure_breaks(result)
+    
+    print(f"📏 Final content length: {len(result)} characters")
+    
+    # Debug: show structure
+    lines = result.split('\n')
+    non_empty_lines = [line for line in lines if line.strip()]
+    print(f"📊 Structure: {len(non_empty_lines)} content lines, {lines.count('')} blank lines")
+    
+    return result
 
-  def _extract_text_simple_paragraphs(self, element) -> str:
+  def _extract_united_spinal_with_breaks(self, content_element) -> str:
     """
-    Simple paragraph extraction - just focus on getting proper breaks between content blocks.
+    GUARANTEED method to extract United Spinal content with proper paragraph breaks.
     """
-    # Get all text blocks and separate them with double newlines
-    text_blocks = []
+    # Strategy: Get ALL text, then intelligently add breaks
+    all_text = content_element.get_text(separator=' ', strip=True)
     
-    # Look for common content patterns in United Spinal pages
-    # Often organization names are in separate elements or bold text
-    for child in element.find_all(['p', 'div', 'span', 'strong', 'b'], recursive=True):
-        text = child.get_text(strip=True)
-        if text and len(text) > 10:  # Skip very short text
-            # Check if this looks like an organization name (shorter text with key indicators)
-            if self._looks_like_organization_name(text):
-                text_blocks.append(f"\n\n{text}\n")  # Extra spacing around org names
-            else:
-                text_blocks.append(text)
+    # Clean up excessive whitespace first
+    all_text = re.sub(r'\s+', ' ', all_text)
     
-    # If we didn't find structured content, fall back to simple extraction
-    if not text_blocks:
-        text_blocks = [element.get_text(strip=True)]
-    
-    # Join and clean up spacing
-    result = ' '.join(text_blocks)
-    
-    # Ensure proper paragraph breaks
-    result = re.sub(r'\n\s*\n\s*\n+', '\n\n', result)  # Normalize multiple newlines to double
-    result = re.sub(r'([.!?])\s*([A-Z][a-z])', r'\1\n\n\2', result)  # Add breaks after sentences before new topics
-    
-    return result.strip()
-
-  def _looks_like_organization_name(self, text: str) -> bool:
-    """Simple check for organization names."""
-    org_keywords = [
-        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center', 
+    # Define organization indicators
+    org_indicators = [
+        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center',
         'Society', 'Organization', 'Organisation', 'Hospital', 'Clinic', 'NGO'
     ]
     
-    # Short text with organization keywords, but not containing descriptive words
-    if (len(text) < 150 and 
-        any(keyword in text for keyword in org_keywords) and
-        not any(word in text.lower() for word in ['provides', 'offers', 'established', 'working', 'committed'])):
-        return True
-    return False
+    # Build pattern to find organization names
+    # Look for patterns like "Word Word Foundation" at word boundaries
+    org_pattern = r'\b([A-Z][^.]*?(?:' + '|'.join(org_indicators) + r'))\b'
+    
+    # Find all potential organization names
+    potential_orgs = re.findall(org_pattern, all_text)
+    
+    # Filter to likely organization names (not too long, not containing descriptive words)
+    org_names = []
+    descriptive_words = ['provides', 'offers', 'established', 'founded', 'working', 'committed', 'believe', 'mission']
+    
+    for org in potential_orgs:
+        if (len(org) < 100 and  # Not too long
+            not any(word in org.lower() for word in descriptive_words) and  # Not descriptive
+            org.count(' ') < 6):  # Not too many words
+            org_names.append(org)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_orgs = []
+    for org in org_names:
+        if org not in seen:
+            seen.add(org)
+            unique_orgs.append(org)
+    
+    print(f"🏢 Found {len(unique_orgs)} organization names: {unique_orgs[:5]}...")
+    
+    # Now add paragraph breaks before each organization name
+    result_text = all_text
+    for org in unique_orgs:
+        # Add double newline before organization name (if not already there)
+        pattern = r'(\w)\s+(' + re.escape(org) + r')\b'
+        replacement = r'\1\n\n\2'
+        result_text = re.sub(pattern, replacement, result_text)
+    
+    return result_text
 
-  def _minimal_clean_preserve_structure(self, text: str) -> str:
+  def _clean_and_ensure_breaks(self, text: str) -> str:
     """
-    Minimal cleaning that preserves paragraph structure for RecursiveTextSplitter.
+    Final cleanup to ensure proper paragraph structure for RecursiveTextSplitter.
     """
     # Normalize line endings
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     
-    # Remove excessive whitespace within lines, but preserve newlines
-    lines = text.split('\n')
-    cleaned_lines = []
+    # Additional patterns that should trigger paragraph breaks
+    break_patterns = [
+        # Contact information
+        (r'(\w)\s+(Phone\s*:)', r'\1\n\n\2'),
+        (r'(\w)\s+(Email\s*:)', r'\1\n\n\2'),
+        (r'(\w)\s+(Telephone\s*:)', r'\1\n\n\2'),
+        (r'(\w)\s+(Address\s*:)', r'\1\n\n\2'),
+        
+        # End of sentence followed by capital letter (new topic)
+        (r'(\w\.)\s+([A-Z][a-z]+)', r'\1\n\n\2'),
+        
+        # Years (often start new topics)
+        (r'(\w)\s+((?:19|20)\d{2})', r'\1\n\n\2'),
+    ]
     
-    for line in lines:
-        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
-        cleaned_lines.append(cleaned_line)
-    
-    text = '\n'.join(cleaned_lines)
+    for pattern, replacement in break_patterns:
+        text = re.sub(pattern, replacement, text)
     
     # Clean up excessive newlines (max 2 consecutive)
     text = re.sub(r'\n{3,}', '\n\n', text)
     
-    return text.strip()
+    # Ensure lines aren't too long without breaks
+    lines = text.split('\n')
+    final_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            final_lines.append('')
+            continue
+        
+        # If line is very long, try to break it at sentence boundaries
+        if len(line) > 500:
+            # Split on periods followed by space and capital letter
+            sentences = re.split(r'(\w\.)\s+([A-Z])', line)
+            if len(sentences) > 1:
+                # Reconstruct with breaks
+                reconstructed = []
+                for i in range(0, len(sentences), 3):
+                    if i + 2 < len(sentences):
+                        reconstructed.append(sentences[i] + sentences[i+1])
+                        reconstructed.append('')  # Blank line
+                        reconstructed.append(sentences[i+2])
+                    else:
+                        reconstructed.append(sentences[i])
+                final_lines.extend(reconstructed)
+                continue
+        
+        final_lines.append(line)
+    
+    result = '\n'.join(final_lines)
+    
+    # Final cleanup - remove excessive spaces and normalize
+    result = re.sub(r'[ \t]+', ' ', result)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    
+    return result.strip()
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Standard content extraction logic (original behavior)."""
+    """Updated standard content extraction with better paragraph handling."""
     main_content = self._find_main_content_area(soup, url)
     
     if main_content:
@@ -331,56 +316,8 @@ class WebCrawler:
         else:
             content_text = self._extract_text_with_structure(soup)
     
-    return self._clean_extracted_text_preserve_structure(content_text)
-
-  def _clean_extracted_text_preserve_structure(self, text: str) -> str:
-    """
-    Clean and normalize the extracted text content while preserving paragraph structure
-    for RecursiveTextSplitter compatibility.
-    """
-    # First normalize line endings
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    
-    # Remove excessive blank lines (more than 2 consecutive newlines)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    # Normalize spaces within lines (but preserve newlines)
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    for line in lines:
-        # Remove excessive spaces within each line
-        cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
-        cleaned_lines.append(cleaned_line)
-    
-    text = '\n'.join(cleaned_lines)
-    
-    # Remove common navigational text patterns
-    nav_patterns = [
-        r'Home\s*>\s*',
-        r'Skip to (?:main )?content',
-        r'Menu\s*Toggle',
-        r'Search\s*for:',
-        r'Categories?\s*:',
-        r'Tags?\s*:',
-        r'Share\s*this\s*(?:post|article|page)',
-        r'Follow\s*us\s*on',
-        r'Subscribe\s*to\s*our',
-        r'Cookie\s*(?:Policy|Notice)',
-        r'Privacy\s*Policy',
-        r'Terms\s*(?:of\s*(?:Service|Use))?',
-        r'Copyright\s*©',
-        r'All\s*rights\s*reserved'
-    ]
-    
-    for pattern in nav_patterns:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    
-    # Clean up any resulting empty lines or excessive whitespace
-    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)  # Max 2 consecutive newlines
-    text = text.strip()
-    
-    return text
+    # Apply the same break-ensuring logic
+    return self._clean_and_ensure_breaks(content_text)
 
   def _find_main_content_area(self, soup, url: str = None):
     """
@@ -1206,7 +1143,7 @@ class WebCrawler:
       print(f"    ✅ Successfully scraped: {page_title}")
       
       # Extract main content with filtering
-      clean_text = self._extract_main_content(soup, url)
+      clean_text = self._extract_standard_content(soup, url)
       
       # Extract links from main content area
       content_links = self._extract_content_links(soup, url)
