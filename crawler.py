@@ -314,15 +314,10 @@ class WebCrawler:
     Enhanced PDF text cleaning that preserves structure for RecursiveTextSplitter.
     """
     print(f"🧹 Filtering PDF content for: {url}")
-    print(f"📊 Original PDF text length: {len(pdf_text)} characters")
     
     # Extract URLs before cleaning
     raw_urls = self._extract_urls_from_raw_text_improved(pdf_text)
     print(f"🔍 Found {len(raw_urls)} raw URLs before cleaning")
-    
-    # Show original line count for debugging
-    original_lines = pdf_text.split('\n')
-    print(f"📄 Original PDF has {len(original_lines)} lines")
     
     # Split into lines for processing
     lines = pdf_text.split('\n')
@@ -368,30 +363,20 @@ class WebCrawler:
             cleaned_lines.append('')
     
     print(f"🗑️  Removed {removed_lines} PDF artifact lines")
-    print(f"📄 After artifact removal: {len(cleaned_lines)} lines")
     
     # Rejoin lines
     text = '\n'.join(cleaned_lines)
     
     # PDF-specific paragraph detection and enhancement
-    print(f"🔧 Starting PDF paragraph enhancement...")
     text = self._enhance_pdf_paragraph_structure(text)
     
-    # Apply structure-preserving cleaning (but be more gentle with PDFs)
-    text = self._clean_pdf_text_preserve_structure(text)
+    # Apply structure-preserving cleaning
+    text = self._clean_extracted_text_preserve_structure(text)
     
     # Re-inject any URLs that were lost during cleaning
     text = self._preserve_urls_in_cleaned_text_improved(text, raw_urls)
     
     print(f"📏 Final PDF content length: {len(text)} characters")
-    
-    # Debug: Show final paragraph structure
-    final_paragraphs = text.split('\n\n')
-    print(f"📝 Final PDF has {len(final_paragraphs)} paragraphs")
-    for i, para in enumerate(final_paragraphs[:3]):  # Show first 3 paragraphs
-        preview = para.replace('\n', ' ')[:100]
-        print(f"  PDF Para {i+1}: {preview}{'...' if len(preview) >= 100 else ''}")
-    
     return text
 
   def _enhance_pdf_paragraph_structure(self, text: str) -> str:
@@ -404,8 +389,6 @@ class WebCrawler:
     # Split into lines for processing
     lines = text.split('\n')
     enhanced_lines = []
-    
-    paragraph_breaks_added = 0
     
     for i, line in enumerate(lines):
         current_line = line.strip()
@@ -421,74 +404,34 @@ class WebCrawler:
         # 1. Lines that start with capital letters after a sentence-ending line
         if i > 0:
             prev_line = lines[i-1].strip()
-            if (prev_line and 
-                prev_line.endswith(('.', '!', '?', ':')) and 
-                current_line and 
-                len(current_line) > 0 and
-                current_line[0].isupper() and 
-                len(current_line) > 5):  # Reduced threshold from 10 to 5
+            if (prev_line.endswith(('.', '!', '?', ':')) and 
+                current_line and current_line[0].isupper() and 
+                len(current_line) > 10):  # Avoid breaking on short headings
                 should_break = True
-                print(f"  📝 Sentence break detected: '{prev_line[-20:]}' → '{current_line[:30]}'")
         
-        # 2. Lines that look like headings (more permissive)
-        if (len(current_line) < 150 and  # Increased from 100
-            current_line.count(' ') < 12 and  # Increased from 8
-            current_line and current_line[0].isupper() and
+        # 2. Lines that look like headings (short, title case, no ending punctuation)
+        if (len(current_line) < 100 and 
+            current_line.count(' ') < 8 and  # Not too many words
+            current_line[0].isupper() and
             not current_line.endswith(('.', '!', '?', ',', ';')) and
-            len(current_line) > 3):  # Minimum length
-            # Check if it's not a continuation of a sentence
-            if i > 0:
-                prev_line = lines[i-1].strip()
-                if not (prev_line and prev_line.endswith((',', ';', 'and', 'or', 'but', 'the', 'of', 'in', 'on', 'at', 'to', 'for'))):
-                    should_break = True
-                    print(f"  📋 Heading detected: '{current_line[:50]}'")
-        
-        # 3. Lines that start with bullet points or numbers (more patterns)
-        if (re.match(r'^\s*[•\-\*]\s+', current_line) or 
-            re.match(r'^\s*\d+[\.\)]\s+', current_line) or
-            re.match(r'^\s*[a-zA-Z][\.\)]\s+', current_line) or  # a. b. c.
-            re.match(r'^\s*[ivxlcdm]+[\.\)]\s+', current_line, re.IGNORECASE)):  # roman numerals
+            not current_line.lower().startswith(('the ', 'a ', 'an ', 'and ', 'or ', 'but '))):
             should_break = True
-            print(f"  📋 List item detected: '{current_line[:50]}'")
         
-        # 4. Lines that start with organization/location names (more comprehensive)
-        org_pattern = r'^[A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO|Inc|LLC|Corp|University|College|School|Department|Ministry|Agency|Service|Program|Project|Initiative|Group|Team|Committee|Council|Board|Office)\b'
-        if re.match(org_pattern, current_line):
+        # 3. Lines that start with bullet points or numbers
+        if re.match(r'^\s*[•\-\*]\s+', current_line) or re.match(r'^\s*\d+[\.\)]\s+', current_line):
             should_break = True
-            print(f"  🏢 Organization detected: '{current_line[:50]}'")
         
-        # 5. Lines that start with location indicators (more comprehensive)
-        location_pattern = r'^[A-Z][^.]*(?:Street|Road|Avenue|Drive|Lane|Boulevard|Plaza|Square|Park|City|State|Province|Country|Address|Location|Phone|Tel|Email|Website|Contact|Office)\b'
-        if re.match(location_pattern, current_line):
+        # 4. Lines that start with organization/location names (common in directories)
+        if re.match(r'^[A-Z][^.]*(?:Foundation|Institute|Trust|Association|Centre|Center|Society|Hospital|Clinic|NGO|Inc|LLC|Corp)\b', current_line):
             should_break = True
-            print(f"  📍 Location detected: '{current_line[:50]}'")
         
-        # 6. Lines that start with common section indicators
-        section_patterns = [
-            r'^(?:Description|Overview|Summary|Introduction|Background|Purpose|Mission|Vision|Goals|Objectives|Services|Programs|Contact|About|History|Staff|Team|Board|Directors|Management)[:.]?\s*',
-            r'^(?:Address|Phone|Email|Website|Hours|Schedule|Fees|Cost|Price|Registration|Enrollment|Application|Requirements|Eligibility)[:.]?\s*',
-            r'^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)',  # Days of week
-            r'^(?:January|February|March|April|May|June|July|August|September|October|November|December)',  # Months
-        ]
-        
-        for pattern in section_patterns:
-            if re.match(pattern, current_line, re.IGNORECASE):
-                should_break = True
-                print(f"  📋 Section indicator detected: '{current_line[:50]}'")
-                break
-        
-        # 7. Lines with significant formatting changes (all caps, mixed case after lowercase)
-        if (len(current_line) > 5 and 
-            current_line.isupper() and 
-            i > 0 and lines[i-1].strip() and 
-            not lines[i-1].strip().isupper()):
+        # 5. Lines that start with location indicators
+        if re.match(r'^[A-Z][^.]*(?:Street|Road|Avenue|Drive|Lane|Boulevard|Plaza|Square|Park|City|State|Province|Country)\b', current_line):
             should_break = True
-            print(f"  📢 ALL CAPS detected: '{current_line[:50]}'")
         
         # Add paragraph break if needed
         if should_break and enhanced_lines and enhanced_lines[-1]:  # Don't add multiple breaks
             enhanced_lines.append('')  # Add blank line for paragraph break
-            paragraph_breaks_added += 1
         
         enhanced_lines.append(current_line)
     
@@ -496,62 +439,11 @@ class WebCrawler:
     enhanced_text = '\n'.join(enhanced_lines)
     
     # Count paragraph breaks added
-    original_line_count = len([line for line in lines if line.strip()])
+    original_paragraphs = len([line for line in lines if line.strip()])
     enhanced_paragraphs = len(enhanced_text.split('\n\n'))
-    print(f"📊 Enhanced PDF structure: {original_line_count} lines → {enhanced_paragraphs} paragraphs")
-    print(f"🔧 Added {paragraph_breaks_added} paragraph breaks")
+    print(f"📊 Enhanced PDF structure: {original_paragraphs} lines → {enhanced_paragraphs} paragraphs")
     
     return enhanced_text
-
-  def _clean_pdf_text_preserve_structure(self, text: str) -> str:
-    """
-    Clean PDF text while being more careful about preserving paragraph structure
-    that was specifically added for PDFs.
-    """
-    print("🧹 Applying PDF-specific structure cleaning...")
-    
-    # 1. Normalize line endings but preserve paragraph structure
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    
-    # 2. Be more conservative with paragraph break removal for PDFs
-    # Only remove truly excessive blank lines (3+ consecutive)
-    text = re.sub(r'\n\s*\n\s*\n\s*\n+', '\n\n\n', text)  # 4+ newlines -> 3 newlines
-    
-    # 3. Clean each line individually but preserve structure
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    for line in lines:
-        if line.strip():  # Non-empty lines
-            # Remove excessive spaces within each line
-            cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
-            cleaned_lines.append(cleaned_line)
-        else:  # Empty lines (preserve for paragraph structure)
-            cleaned_lines.append('')
-    
-    # 4. Rejoin lines
-    text = '\n'.join(cleaned_lines)
-    
-    # 5. Remove navigation patterns but be more conservative
-    nav_patterns = [
-        r'Skip to (?:main )?content\n?',
-        r'Menu\s*Toggle\n?',
-        r'Search\s*for:\n?',
-        r'Cookie\s*(?:Policy|Notice)\n?',
-        r'Privacy\s*Policy\n?',
-    ]
-    
-    for pattern in nav_patterns:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    
-    # 6. Final cleanup - be more conservative with paragraph normalization
-    # Only normalize truly excessive spacing
-    text = re.sub(r'\n\s*\n\s*\n\s*\n+', '\n\n', text)  # 4+ newlines -> 2 newlines
-    
-    # 7. Remove leading/trailing whitespace
-    text = text.strip()
-    
-    return text
 
   def _line_contains_url(self, line: str) -> bool:
     """Check if a line contains what looks like a URL.
