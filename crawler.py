@@ -189,7 +189,7 @@ class WebCrawler:
   def _extract_text_with_structure(self, element) -> str:
     """
     Extract text from HTML element while preserving paragraph structure.
-    Uses custom logic to add appropriate line breaks.
+    Uses custom logic to add appropriate line breaks for RecursiveTextSplitter.
     """
     # Block-level elements that should create paragraph breaks
     block_elements = {
@@ -203,16 +203,6 @@ class WebCrawler:
     # Elements that should create single line breaks
     line_break_elements = {'br'}
     
-    def extract_with_breaks(elem):
-        if elem.name in block_elements:
-            # Add double newline before block elements (except at start)
-            text = '\n\n' + elem.get_text(separator=' ', strip=True) + '\n\n'
-        elif elem.name in line_break_elements:
-            text = '\n'
-        else:
-            text = elem.get_text(separator=' ', strip=True)
-        return text
-    
     # Handle different input types
     if hasattr(element, 'find_all'):
         # It's a BeautifulSoup element
@@ -224,7 +214,8 @@ class WebCrawler:
                 if child.name in block_elements:
                     child_text = child.get_text(separator=' ', strip=True)
                     if child_text.strip():
-                        result_parts.append('\n\n' + child_text.strip())
+                        # Add double newlines for paragraph separation
+                        result_parts.append('\n\n' + child_text.strip() + '\n\n')
                 elif child.name in line_break_elements:
                     result_parts.append('\n')
                 else:
@@ -237,7 +228,8 @@ class WebCrawler:
                 if text:
                     result_parts.append(text)
         
-        return ' '.join(result_parts)
+        # FIXED: Join with empty string instead of space to preserve newlines
+        return ''.join(result_parts)
     else:
         # Fallback to simple text extraction
         return element.get_text(separator='\n', strip=True)
@@ -249,7 +241,7 @@ class WebCrawler:
     return 'unitedspinal.org' in domain
 
   def _extract_united_spinal_content(self, soup: BeautifulSoup, url: str) -> str:
-    """Extract content specifically from United Spinal sites."""
+    """Extract content specifically from United Spinal sites with enhanced paragraph detection."""
     print(f"🏥 Extracting United Spinal content from: {url}")
     
     # First, remove any <div class="helpful"> elements
@@ -264,7 +256,9 @@ class WebCrawler:
     
     if content_element:
         print(f"🎯 Found United Spinal content in #content2col")
-        content_text = self._extract_text_with_structure(content_element)
+        
+        # Enhanced extraction for United Spinal - detect organization entries
+        content_text = self._extract_united_spinal_structured_content(content_element)
         print(f"📏 United Spinal content length: {len(content_text)} characters")
         
         # Clean the extracted text while preserving structure
@@ -274,6 +268,116 @@ class WebCrawler:
         print(f"⚠️  Could not find #content2col on United Spinal site, falling back to standard extraction")
         # Fall back to standard content extraction
         return self._extract_standard_content(soup, url)
+
+  def _extract_united_spinal_structured_content(self, content_element) -> str:
+    """
+    Extract content from United Spinal sites with special handling for organization listings.
+    Each organization should be separated by blank lines for proper chunking.
+    """
+    # Look for patterns that indicate organization entries
+    # Organization names are often in bold or are standalone text blocks
+    result_parts = []
+    
+    # Process all text elements and detect organization patterns
+    for element in content_element.find_all(text=True, recursive=True):
+        parent = element.parent
+        text = element.strip()
+        
+        if not text:
+            continue
+            
+        # Skip if parent is a script or style tag
+        if parent and parent.name in ['script', 'style']:
+            continue
+            
+        # Check if this looks like an organization name (often in bold or at start of line)
+        is_org_name = self._is_likely_organization_name(text, parent)
+        
+        if is_org_name:
+            # Add double newlines before organization names for paragraph separation
+            result_parts.append(f'\n\n{text}')
+        else:
+            # Regular text - add with space separation
+            if text.endswith('.') or len(text) > 50:
+                # Likely end of a sentence or description - add newline
+                result_parts.append(f' {text}\n')
+            else:
+                result_parts.append(f' {text}')
+    
+    # Join and clean up
+    content_text = ''.join(result_parts)
+    
+    # Additional cleanup for United Spinal format
+    content_text = self._post_process_united_spinal_content(content_text)
+    
+    return content_text
+
+  def _is_likely_organization_name(self, text: str, parent_element) -> bool:
+    """
+    Detect if text is likely an organization name based on content and HTML structure.
+    """
+    # Check HTML structure clues
+    if parent_element:
+        # Often organization names are in bold
+        if parent_element.name in ['b', 'strong']:
+            return True
+        
+        # Or have specific classes/styles
+        classes = parent_element.get('class', [])
+        if any('title' in str(cls).lower() or 'name' in str(cls).lower() for cls in classes):
+            return True
+    
+    # Check content patterns
+    org_indicators = [
+        'Foundation', 'Institute', 'Trust', 'Association', 'Centre', 'Center',
+        'Society', 'Organization', 'Organisation', 'NGO', 'Hospital', 'Clinic'
+    ]
+    
+    # Check if text contains organization indicators and is short enough to be a name
+    if len(text) < 200 and any(indicator in text for indicator in org_indicators):
+        # Additional check: shouldn't contain common sentence patterns
+        sentence_indicators = [
+            'provides', 'offers', 'established', 'founded', 'working', 
+            'committed', 'mission', 'believe', 'stress'
+        ]
+        if not any(indicator.lower() in text.lower() for indicator in sentence_indicators):
+            return True
+    
+    return False
+
+  def _post_process_united_spinal_content(self, content_text: str) -> str:
+    """
+    Post-process United Spinal content to ensure proper paragraph separation.
+    """
+    # Split into lines and process
+    lines = content_text.split('\n')
+    processed_lines = []
+    
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            processed_lines.append('')
+            continue
+            
+        # If this line looks like contact info or details, ensure it's properly separated
+        if self._is_contact_or_detail_line(line):
+            # Add blank line before contact details if previous line wasn't blank
+            if i > 0 and processed_lines and processed_lines[-1].strip():
+                processed_lines.append('')
+            processed_lines.append(line)
+        else:
+            processed_lines.append(line)
+    
+    return '\n'.join(processed_lines)
+
+  def _is_contact_or_detail_line(self, line: str) -> bool:
+    """Check if line contains contact information or detailed descriptions."""
+    contact_indicators = [
+        'Phone', 'Email', 'Address', 'Website', 'Tel', 'Fax',
+        '@', 'http', 'www.', '.com', '.org', '.in'
+    ]
+    
+    return any(indicator in line for indicator in contact_indicators)
 
   def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> str:
     """Standard content extraction logic (original behavior)."""
