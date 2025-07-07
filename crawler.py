@@ -613,6 +613,9 @@ class WebCrawler:
     """
     print(f"🔗 Extracting links from main content area: {url}")
     
+    # Initialize main_content_element to None
+    main_content_element = None
+    
     # Check if this is a United Spinal site that needs special handling
     if self._is_united_spinal_site(url):
         # Look for the specific content div
